@@ -19,6 +19,9 @@ const codeStore = useCodeStore()
 const historyStore = useHistoryStore()
 const imageStore = useImageStore()
 
+// 执行起始时间（用于计算耗时）
+let _execStartTime = 0
+
 const activeTab = ref('code')
 
 // --- WebSocket ---
@@ -26,16 +29,15 @@ const ws = useWebSocket()
 
 ws.onResult((msg: ResultMessage) => {
   codeStore.setExecuting(false)
-  codeStore.setResult(msg)
+  const durationMs = _execStartTime > 0 ? Date.now() - _execStartTime : undefined
+  codeStore.setResult(msg, durationMs)
 
-  historyStore.addEntry({
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-    code: codeStore.content,
+  historyStore.updateLastEntry({
     result: msg.data,
     resultDataType: msg.dataType || 'text',
     resultMime: msg.mime,
     status: msg.status,
-    timestamp: Date.now(),
+    durationMs,
   })
 
   // 图片结果 → 图片列表
@@ -59,6 +61,7 @@ function onDisconnect() { ws.disconnect() }
 // --- 运行 ---
 function onRun() {
   if (!codeStore.content.trim()) return
+  _execStartTime = Date.now()
   codeStore.setExecuting(true)
   historyStore.addEntry({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),

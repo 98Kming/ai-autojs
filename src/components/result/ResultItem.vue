@@ -16,6 +16,12 @@ const formattedTime = computed(() => {
   return d.toLocaleTimeString('zh-CN', { hour12: false })
 })
 
+const formattedDuration = computed(() => {
+  const ms = props.entry.durationMs
+  if (ms == null) return ''
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+})
+
 const isImage = computed(() =>
   props.entry.dataType === 'base64' && props.entry.mime?.startsWith('image/')
 )
@@ -82,6 +88,7 @@ function hexDump(base64: string, maxBytes: number = 256): string {
         <el-tag type="info" size="small">二进制</el-tag>
       </span>
       <span class="result-time">{{ formattedTime }}</span>
+      <span v-if="formattedDuration" class="result-duration">{{ formattedDuration }}</span>
       <div class="result-actions">
         <el-tooltip content="复制结果" :show-after="500">
           <el-button size="small" text :icon="CopyDocument" @click="copyResult" />
@@ -138,14 +145,23 @@ function hexDump(base64: string, maxBytes: number = 256): string {
 }
 
 .result-time {
-  flex: 1;
   font-size: 12px;
   color: var(--color-text-placeholder);
+}
+
+.result-duration {
+  font-size: 11px;
+  color: var(--color-text-placeholder);
+  background: var(--color-bg-tertiary);
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: var(--editor-font-family, monospace);
 }
 
 .result-actions {
   display: flex;
   gap: 4px;
+  margin-left: auto;
 }
 
 .result-body {

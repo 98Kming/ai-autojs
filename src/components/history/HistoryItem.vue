@@ -17,6 +17,12 @@ const formattedTime = computed(() => {
   return d.toLocaleString('zh-CN', { hour12: false })
 })
 
+const formattedDuration = computed(() => {
+  const ms = props.entry.durationMs
+  if (ms == null) return ''
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+})
+
 const codePreview = computed(() => {
   const code = props.entry.code
   return code.length > 80 ? code.slice(0, 80) + '...' : code
@@ -48,6 +54,7 @@ function onDelete() {
         {{ entry.status === 'success' ? '成功' : entry.status === 'error' ? '失败' : '等待中' }}
       </el-tag>
       <span class="history-time">{{ formattedTime }}</span>
+      <span v-if="formattedDuration" class="history-duration">{{ formattedDuration }}</span>
       <div class="history-actions">
         <el-tooltip content="重新运行" :show-after="500">
           <el-button size="small" text :icon="VideoPlay" @click="onReRun" />
@@ -92,14 +99,24 @@ function onDelete() {
 }
 
 .history-time {
-  flex: 1;
   font-size: 12px;
   color: var(--color-text-placeholder);
+}
+
+.history-duration {
+  font-size: 11px;
+  color: var(--color-text-placeholder);
+  background: var(--color-bg-tertiary);
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: var(--editor-font-family, monospace);
+  margin-right: auto;
 }
 
 .history-actions {
   display: flex;
   gap: 2px;
+  margin-left: auto;
 }
 
 .history-code {

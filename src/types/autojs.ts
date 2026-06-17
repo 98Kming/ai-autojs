@@ -69,6 +69,7 @@ export interface HistoryEntry {
   resultMime?: string
   status: 'success' | 'error' | 'pending'
   timestamp: number
+  durationMs?: number
 }
 
 // ===== 代码模板 =====

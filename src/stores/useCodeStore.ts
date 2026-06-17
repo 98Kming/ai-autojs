@@ -5,6 +5,7 @@ import type { ResultMessage } from '@/types/autojs'
 export interface ResultEntry {
   id: string
   timestamp: number
+  durationMs?: number
   data: string
   status: 'success' | 'error'
   dataType: 'text' | 'base64'
@@ -31,10 +32,11 @@ export const useCodeStore = defineStore('code', () => {
     isExecuting.value = val
   }
 
-  function setResult(msg: ResultMessage) {
+  function setResult(msg: ResultMessage, execDurationMs?: number) {
     lastResult.value = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
       timestamp: Date.now(),
+      durationMs: execDurationMs,
       data: msg.data,
       status: msg.status,
       dataType: msg.dataType || 'text',
