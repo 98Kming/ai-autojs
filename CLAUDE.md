@@ -161,6 +161,21 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 
 **Java byte 赋值陷阱**：JS 数字是 unsigned（0-255），Java byte 是 signed（-128~127）。值超过 127 时必须用 `new java.lang.Integer(n).byteValue()` 做截断转换，否则抛 `Cannot convert 129 to java.lang.Byte`。
 
+## 图片查看器放大镜
+
+图片展示区内置像素级放大镜（`ImagePanel.vue`）：
+
+| 特性 | 说明 |
+|---|---|
+| 触发方式 | 勾选「🔍 放大镜」复选框，默认开启 |
+| 镜片 | 180×180px 正方形，4x 放大，白色边框 + 阴影 |
+| 像素网格 | `repeating-linear-gradient` 虚线网格，间距 4px（对应原图 1px），中灰色 |
+| 坐标信息 | 镜片底部显示原图像素坐标 `(x, y)` |
+| 颜色采样 | Canvas `getImageData` 实时取色，显示色块 + 16 进制值 |
+| 鼠标指示 | 镜片中心红色十字准星，标识当前像素位置 |
+| 边缘翻转 | 镜片靠近 viewer 边缘时自动反向偏移，避免溢出 |
+| 视口适配 | `overflow: hidden` + `object-fit: contain`，无滚动条 |
+
 ## 编码约定
 
 - 中文代码注释，英文标识符
