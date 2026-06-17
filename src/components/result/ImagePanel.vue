@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Delete, Camera, Scissor, Reading, Loading } from '@element-plus/icons-vue'
+import { Delete, Camera, Scissor, Reading, Loading, FullScreen } from '@element-plus/icons-vue'
 import { useImageStore, type ImageEntry } from '@/stores/useImageStore'
 import { useCodeStore } from '@/stores/useCodeStore'
 import ImageCard from './ImageCard.vue'
@@ -109,13 +109,140 @@ function toggleCropMode() {
     isCropping.value = false
     cropParams.value = null
     cropFileName.value = ''
+  } else {
+    resizeMode.value = false // 互斥
   }
+}
+
+// === 调整大小（opencv.js） ===
+const resizeMode = ref(false)
+const cvReady = ref(false)
+const cvLoading = ref(false)
+const resizeW = ref(0)
+const resizeH = ref(0)
+const keepRatio = ref(true)
+const interpolation = ref('INTER_LINEAR')
+const resizeFileName = ref('')
+const isResizing = ref(false)
+
+const INTERPOLATION_OPTIONS = [
+  { label: '最近邻', value: 'INTER_NEAREST' },
+  { label: '双线性', value: 'INTER_LINEAR' },
+  { label: '双三次', value: 'INTER_CUBIC' },
+  { label: 'Lanczos4', value: 'INTER_LANCZOS4' },
+  { label: '区域', value: 'INTER_AREA' },
+]
+
+function loadOpenCV(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).cv?.Mat) { cvReady.value = true; resolve(); return }
+    cvLoading.value = true
+    const script = document.createElement('script')
+    script.src = 'https://docs.opencv.org/4.x/opencv.js'
+    script.onload = () => {
+      const timer = setInterval(() => {
+        if ((window as any).cv?.Mat) {
+          clearInterval(timer)
+          cvReady.value = true
+          cvLoading.value = false
+          resolve()
+        }
+      }, 100)
+    }
+    script.onerror = () => { cvLoading.value = false; reject(new Error('OpenCV 加载失败')) }
+    document.head.appendChild(script)
+  })
+}
+
+function resetResize() {
+  resizeMode.value = false
+  cvLoading.value = false
+  resizeW.value = 0
+  resizeH.value = 0
+  resizeFileName.value = ''
+  isResizing.value = false
+}
+
+async function toggleResizeMode() {
+  resizeMode.value = !resizeMode.value
+  if (!resizeMode.value) return
+  // 与剪切互斥
+  if (cropMode.value) toggleCropMode()
+  // 初始化当前图片尺寸
+  resizeW.value = imageNaturalSize.value.width
+  resizeH.value = imageNaturalSize.value.height
+  resizeFileName.value = `_${resizeW.value}_${resizeH.value}.png`
+  // 按需加载 opencv
+  if (!cvReady.value && !cvLoading.value) {
+    try {
+      await loadOpenCV()
+    } catch (e: any) {
+      ElMessage.error(e.message)
+    }
+  }
+}
+
+function updateResizeRatio(changed: 'w' | 'h') {
+  if (!keepRatio.value) return
+  const nw = imageNaturalSize.value.width
+  const nh = imageNaturalSize.value.height
+  if (changed === 'w' && nw > 0) {
+    resizeH.value = Math.round(resizeW.value * nh / nw)
+  } else if (changed === 'h' && nh > 0) {
+    resizeW.value = Math.round(resizeH.value * nw / nh)
+  }
+}
+
+function executeResize() {
+  if (!selectedImage.value || isResizing.value) return
+  const newW = Math.max(1, Math.min(8192, resizeW.value))
+  const newH = Math.max(1, Math.min(8192, resizeH.value))
+  isResizing.value = true
+
+  const img = new Image()
+  img.onload = () => {
+    const output = document.createElement('canvas')
+    output.width = newW
+    output.height = newH
+
+    if (cvReady.value) {
+      try {
+        const cv = (window as any).cv
+        const src = cv.imread(img)
+        const dst = new cv.Mat()
+        const size = new cv.Size(newW, newH)
+        const interp = cv[interpolation.value] || cv.INTER_LINEAR
+        cv.resize(src, dst, size, 0, 0, interp)
+        cv.imshow(output, dst)
+        src.delete()
+        dst.delete()
+      } catch (e) {
+        ElMessage.error('OpenCV 处理出错，已切换 Canvas 回退')
+        const ctx = output.getContext('2d')!
+        ctx.drawImage(img, 0, 0, newW, newH)
+      }
+    } else {
+      const ctx = output.getContext('2d')!
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(img, 0, 0, newW, newH)
+    }
+
+    const mime = selectedImage.value!.mime || 'image/png'
+    const base64 = output.toDataURL(mime).split(',')[1]
+    imageStore.addImage(base64, mime, resizeFileName.value || `_${newW}_${newH}`)
+    isResizing.value = false
+    ElMessage.success(`调整完成 ${newW}×${newH}`)
+  }
+  img.onerror = () => { isResizing.value = false; ElMessage.error('图片加载失败') }
+  img.src = selectedSrc.value
 }
 
 // 切换图片时重置
 watch(selectedId, () => {
   resetViewerTransform()
   resetCrop()
+  resetResize()
 })
 
 // 计算图片在 viewer 中实际渲染区域（object-fit: contain 居中缩放）
@@ -319,7 +446,6 @@ function onDragEnd() {
   if (isCropping.value) {
     isCropping.value = false
     showMagnifier.value = true
-    // cropStartV/cropEndV 已在原图坐标中
     const x1 = Math.round(cropStartV.value.x)
     const y1 = Math.round(cropStartV.value.y)
     const x2 = Math.round(cropEndV.value.x)
@@ -504,6 +630,13 @@ window.addEventListener('keyup', onWindowKeyUp)
 
       <el-divider class="tool-divider" />
 
+      <el-tooltip content="调整大小" placement="right" :show-after="300">
+        <el-button :icon="FullScreen" circle :type="resizeMode ? 'primary' : 'default'" @click="toggleResizeMode" />
+      </el-tooltip>
+      <span class="tool-label" :class="{ active: resizeMode }">调整</span>
+
+      <el-divider class="tool-divider" />
+
       <el-tooltip content="文字识别（即将上线）" placement="right" :show-after="300">
         <el-button :icon="Reading" circle disabled />
       </el-tooltip>
@@ -558,7 +691,8 @@ window.addEventListener('keyup', onWindowKeyUp)
         <div class="viewer-toolbar">
           <el-checkbox v-model="magnifierEnabled" size="small">🔍 放大镜</el-checkbox>
           <span v-if="isZoomed" class="zoom-badge">{{ zoomPercent }}</span>
-          <span v-if="cropMode" class="crop-badge">✂️ 剪裁模式</span>
+          <span v-if="cropMode" class="mode-badge">✂️ 剪裁</span>
+          <span v-if="resizeMode" class="mode-badge">📐 调整</span>
         </div>
 
         <img
@@ -584,17 +718,48 @@ window.addEventListener('keyup', onWindowKeyUp)
         </div>
 
         <!-- 剪切参数面板 -->
-        <div v-if="cropParams && cropMode" class="crop-panel" @dblclick.stop>
+        <div v-if="cropParams && cropMode" class="action-panel" @wheel.stop @dblclick.stop>
+          <div class="panel-title">✂️ 剪切</div>
           <div class="crop-params-row">
-            <label>X <input v-model.number="cropParams.x" type="number" class="crop-input" /></label>
-            <label>Y <input v-model.number="cropParams.y" type="number" class="crop-input" /></label>
-            <label>W <input v-model.number="cropParams.w" type="number" class="crop-input" min="1" /></label>
-            <label>H <input v-model.number="cropParams.h" type="number" class="crop-input" min="1" /></label>
+            <label>X <input v-model.number="cropParams.x" type="number" class="ap-input" /></label>
+            <label>Y <input v-model.number="cropParams.y" type="number" class="ap-input" /></label>
+            <label>W <input v-model.number="cropParams.w" type="number" class="ap-input" min="1" /></label>
+            <label>H <input v-model.number="cropParams.h" type="number" class="ap-input" min="1" /></label>
           </div>
-          <div class="crop-file-row">
-            <span class="crop-file-label">文件名</span>
-            <input v-model="cropFileName" class="crop-input file-input" />
-            <el-button size="small" type="primary" @click="executeCrop">✂️ 执行剪切</el-button>
+          <div class="panel-row">
+            <input v-model="cropFileName" class="ap-input file-input" />
+            <el-button size="small" type="primary" @click="executeCrop">✂️ 执行</el-button>
+          </div>
+        </div>
+
+        <!-- 调整大小面板 -->
+        <div v-if="resizeMode" class="action-panel" @wheel.stop @dblclick.stop>
+          <div class="panel-title">📐 调整大小</div>
+          <div class="panel-info">原图 {{ imageNaturalSize.width }} × {{ imageNaturalSize.height }}</div>
+          <div class="crop-params-row">
+            <label>W <input :value="resizeW" type="number" class="ap-input" min="1" max="8192" @input="e => { const el = e.target as HTMLInputElement; resizeW = Number(el.value); updateResizeRatio('w') }" /></label>
+            <label>H <input :value="resizeH" type="number" class="ap-input" min="1" max="8192" @input="e => { const el = e.target as HTMLInputElement; resizeH = Number(el.value); updateResizeRatio('h') }" /></label>
+            <label class="ratio-label">
+              <input type="checkbox" v-model="keepRatio" /> 比例
+            </label>
+          </div>
+          <div class="panel-row">
+            <span class="panel-label">插值</span>
+            <select v-model="interpolation" class="ap-select">
+              <option v-for="opt in INTERPOLATION_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }} ({{ opt.value }})</option>
+            </select>
+          </div>
+          <div class="panel-row">
+            <input v-model="resizeFileName" class="ap-input file-input" />
+            <el-button
+              size="small"
+              type="primary"
+              :disabled="cvLoading || isResizing"
+              :loading="isResizing"
+              @click="executeResize"
+            >
+              {{ cvLoading ? '加载中...' : '📐 执行' }}
+            </el-button>
           </div>
         </div>
       </template>
@@ -740,7 +905,7 @@ window.addEventListener('keyup', onWindowKeyUp)
   line-height: 18px;
 }
 
-.crop-badge {
+.mode-badge {
   color: #409eff;
   font-size: 11px;
   background: rgba(64, 158, 255, 0.2);
@@ -759,8 +924,8 @@ window.addEventListener('keyup', onWindowKeyUp)
   background: rgba(64, 158, 255, 0.1);
 }
 
-/* 剪切参数面板 */
-.crop-panel {
+/* 通用操作面板（剪切 + 调整大小） */
+.action-panel {
   position: absolute;
   bottom: 8px;
   right: 8px;
@@ -773,6 +938,31 @@ window.addEventListener('keyup', onWindowKeyUp)
   flex-direction: column;
   gap: 6px;
   min-width: 280px;
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 2px;
+}
+
+.panel-info {
+  font-size: 11px;
+  color: #888;
+  font-family: var(--editor-font-family, monospace);
+}
+
+.panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-label {
+  font-size: 11px;
+  color: #aaa;
+  white-space: nowrap;
 }
 
 .crop-params-row {
@@ -790,7 +980,21 @@ window.addEventListener('keyup', onWindowKeyUp)
   font-family: var(--editor-font-family, monospace);
 }
 
-.crop-input {
+.ratio-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: #ccc !important;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ratio-label input[type="checkbox"] {
+  accent-color: #409eff;
+}
+
+.ap-input {
   width: 52px;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -803,20 +1007,25 @@ window.addEventListener('keyup', onWindowKeyUp)
   text-align: center;
 }
 
-.crop-input:focus {
+.ap-input:focus {
   border-color: #409eff;
 }
 
-.crop-file-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.ap-select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  color: #fff;
+  font-size: 11px;
+  font-family: var(--editor-font-family, monospace);
+  padding: 2px 4px;
+  outline: none;
+  flex: 1;
 }
 
-.crop-file-label {
-  font-size: 11px;
-  color: #aaa;
-  white-space: nowrap;
+.ap-select option {
+  background: #2a2a4a;
+  color: #fff;
 }
 
 .file-input {
