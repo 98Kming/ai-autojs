@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessageBox, ElMessage } from 'element-plus'
 import { Delete, Camera, Scissor, Reading, Loading } from '@element-plus/icons-vue'
 import { useImageStore, type ImageEntry } from '@/stores/useImageStore'
 import { useCodeStore } from '@/stores/useCodeStore'
@@ -87,8 +87,36 @@ function resetViewerTransform() {
   viewerPanY.value = 0
 }
 
+// === 剪切 ===
+const cropMode = ref(false)
+const isCropping = ref(false)
+const cropStartV = ref({ x: 0, y: 0 })
+const cropEndV = ref({ x: 0, y: 0 })
+const cropParams = ref<{ x: number; y: number; w: number; h: number } | null>(null)
+const cropFileName = ref('')
+const isCtrlHeld = ref(false)
+
+function resetCrop() {
+  cropMode.value = false
+  isCropping.value = false
+  cropParams.value = null
+  cropFileName.value = ''
+}
+
+function toggleCropMode() {
+  cropMode.value = !cropMode.value
+  if (!cropMode.value) {
+    isCropping.value = false
+    cropParams.value = null
+    cropFileName.value = ''
+  }
+}
+
 // 切换图片时重置
-watch(selectedId, () => resetViewerTransform())
+watch(selectedId, () => {
+  resetViewerTransform()
+  resetCrop()
+})
 
 // 计算图片在 viewer 中实际渲染区域（object-fit: contain 居中缩放）
 function getImageRenderRect(viewer: HTMLElement) {
@@ -107,7 +135,7 @@ function getImageRenderRect(viewer: HTMLElement) {
   return { x, y, w, h }
 }
 
-// 带缩放/平移校正的原图坐标映射
+// 带缩放/平移校正的原图坐标映射（viewer px → 原图坐标）
 function getZoomedImageCoord(mx: number, my: number, viewer: HTMLElement, rect?: { x: number; y: number; w: number; h: number }) {
   const r = rect || getImageRenderRect(viewer)
   if (!r) return null
@@ -116,7 +144,6 @@ function getZoomedImageCoord(mx: number, my: number, viewer: HTMLElement, rect?:
   const z = viewerZoom.value
   const px = viewerPanX.value
   const py = viewerPanY.value
-  // 鼠标偏移 image 中心 → 缩放到 zoom=1 空间 → 映射到原图坐标
   const cx = viewer.clientWidth / 2
   const cy = viewer.clientHeight / 2
   const offsetX = mx - cx - px
@@ -124,6 +151,23 @@ function getZoomedImageCoord(mx: number, my: number, viewer: HTMLElement, rect?:
   const natX = natW / 2 + (offsetX / z) * (natW / r.w)
   const natY = natH / 2 + (offsetY / z) * (natH / r.h)
   return { natX, natY }
+}
+
+// 原图坐标 → viewer px（反向映射，用于绘制已完成的选区）
+function imageCoordToViewer(natX: number, natY: number, viewer: HTMLElement) {
+  const rect = getImageRenderRect(viewer)
+  if (!rect) return null
+  const { width: natW, height: natH } = imageNaturalSize.value
+  if (!natW || !natH) return null
+  const z = viewerZoom.value
+  const px = viewerPanX.value
+  const py = viewerPanY.value
+  const cx = viewer.clientWidth / 2
+  const cy = viewer.clientHeight / 2
+  return {
+    x: cx + px + (natX - natW / 2) * z * (rect.w / natW),
+    y: cy + py + (natY - natH / 2) * z * (rect.h / natH),
+  }
 }
 
 // 缩放后图片在 viewer 中的可视边界
@@ -190,7 +234,14 @@ function samplePixel(natX: number, natY: number) {
 
 // === 鼠标事件 ===
 function onViewerMouseMove(e: MouseEvent) {
-  if (isDragging.value) return // 拖拽中由 onDragMove 处理
+  if (isCropping.value) {
+    const viewer = viewerEl.value!
+    const rect = viewer.getBoundingClientRect()
+    const coord = getZoomedImageCoord(e.clientX - rect.left, e.clientY - rect.top, viewer)
+    if (coord) cropEndV.value = { x: coord.natX, y: coord.natY }
+    return
+  }
+  if (isDragging.value) return
 
   if (!magnifierEnabled.value || !viewerEl.value) return
   const rect = viewerEl.value.getBoundingClientRect()
@@ -200,7 +251,6 @@ function onViewerMouseMove(e: MouseEvent) {
   mouseY.value = my
   showMagnifier.value = true
 
-  // 计算原图坐标并采样像素颜色
   const viewer = viewerEl.value
   const imgRect = getImageRenderRect(viewer)
   const bounds = getZoomedImageBounds(viewer)
@@ -222,14 +272,12 @@ function onWheel(e: WheelEvent) {
   const rect = viewer.getBoundingClientRect()
   const viewerCenterX = viewer.clientWidth / 2
   const viewerCenterY = viewer.clientHeight / 2
-  // 鼠标相对 viewer 中心
   const vx = e.clientX - rect.left - viewerCenterX
   const vy = e.clientY - rect.top - viewerCenterY
   const oldZ = viewerZoom.value
   const delta = e.deltaY > 0 ? -0.2 : 0.2
   const newZ = Math.max(0.2, Math.min(10, oldZ + delta))
   if (newZ === oldZ) return
-  // 保持鼠标位置在原图上的对应点不变
   viewerPanX.value = vx * (1 - newZ / oldZ) + viewerPanX.value * newZ / oldZ
   viewerPanY.value = vy * (1 - newZ / oldZ) + viewerPanY.value * newZ / oldZ
   viewerZoom.value = newZ
@@ -237,6 +285,21 @@ function onWheel(e: WheelEvent) {
 
 function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return
+  // 剪切模式 + Ctrl → 开始框选（起始点存原图坐标，缩放时不变）
+  if (cropMode.value && e.ctrlKey && viewerEl.value) {
+    const rect = viewerEl.value.getBoundingClientRect()
+    const mx = e.clientX - rect.left
+    const my = e.clientY - rect.top
+    const coord = getZoomedImageCoord(mx, my, viewerEl.value)
+    if (!coord) return
+    isCropping.value = true
+    showMagnifier.value = false
+    cropStartV.value = { x: coord.natX, y: coord.natY }
+    cropEndV.value = { x: coord.natX, y: coord.natY }
+    cropParams.value = null
+    return
+  }
+  // 否则为平移拖拽
   isDragging.value = true
   showMagnifier.value = false
   dragStart.value = { x: e.clientX, y: e.clientY, panX: viewerPanX.value, panY: viewerPanY.value }
@@ -253,35 +316,113 @@ function onDragMove(e: MouseEvent) {
 }
 
 function onDragEnd() {
+  if (isCropping.value) {
+    isCropping.value = false
+    showMagnifier.value = true
+    // cropStartV/cropEndV 已在原图坐标中
+    const x1 = Math.round(cropStartV.value.x)
+    const y1 = Math.round(cropStartV.value.y)
+    const x2 = Math.round(cropEndV.value.x)
+    const y2 = Math.round(cropEndV.value.y)
+    const x = Math.min(x1, x2)
+    const y = Math.min(y1, y2)
+    const w = Math.max(1, Math.abs(x2 - x1))
+    const h = Math.max(1, Math.abs(y2 - y1))
+    cropParams.value = { x, y, w, h }
+    cropFileName.value = `_${x1}_${y1}_${x2}_${y2}.png`
+    return
+  }
   isDragging.value = false
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup', onDragEnd)
 }
 
-// 组件卸载时清理
-onUnmounted(() => {
-  window.removeEventListener('mousemove', onDragMove)
-  window.removeEventListener('mouseup', onDragEnd)
-  _pixelCanvas = null
-  _pixelCtx = null
-})
+// Ctrl 键跟踪（用于光标切换）
+function onWindowKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Control') isCtrlHeld.value = true
+}
+function onWindowKeyUp(e: KeyboardEvent) {
+  if (e.key === 'Control') isCtrlHeld.value = false
+}
 
-// 缩放的 image 样式
+// === 前端 Canvas 剪切 ===
+function executeCrop() {
+  if (!cropParams.value || !selectedImage.value) return
+  const { x, y, w, h } = cropParams.value
+  if (w < 1 || h < 1) return
+
+  const img = new Image()
+  img.onload = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(img, x, y, w, h, 0, 0, w, h)
+    const mime = selectedImage.value!.mime || 'image/png'
+    const base64 = canvas.toDataURL(mime).split(',')[1]
+    imageStore.addImage(base64, mime, cropFileName.value || `${x}_${y}_${w}_${h}`)
+    ElMessage.success('剪切完成')
+  }
+  img.src = selectedSrc.value
+}
+
+// === 计算样式 ===
 const isZoomed = computed(() => viewerZoom.value > 1.01)
 
 const imageTransformStyle = computed(() => {
-  const z = viewerZoom.value
-  const cursor = isZoomed.value
-    ? (isDragging.value ? 'grabbing' : 'grab')
-    : 'default'
+  let cursor = 'default'
+  if (cropMode.value && (isCtrlHeld.value || isCropping.value)) {
+    cursor = 'crosshair'
+  } else if (isZoomed.value) {
+    cursor = isDragging.value ? 'grabbing' : 'grab'
+  }
   return {
-    transform: `translate(${viewerPanX.value}px, ${viewerPanY.value}px) scale(${z})`,
+    transform: `translate(${viewerPanX.value}px, ${viewerPanY.value}px) scale(${viewerZoom.value})`,
     cursor,
   }
 })
 
-// 缩放百分比文字
 const zoomPercent = computed(() => `${Math.round(viewerZoom.value * 100)}%`)
+
+// 剪切选区覆盖层样式
+const cropOverlayStyle = computed(() => {
+  if (!cropMode.value) return { display: 'none' }
+  const viewer = viewerEl.value
+  if (!viewer) return { display: 'none' }
+
+  let vx: number, vy: number, vw: number, vh: number
+
+  if (isCropping.value) {
+    const tl = imageCoordToViewer(cropStartV.value.x, cropStartV.value.y, viewer)
+    const br = imageCoordToViewer(cropEndV.value.x, cropEndV.value.y, viewer)
+    if (!tl || !br) return { display: 'none' }
+    vx = Math.min(tl.x, br.x)
+    vy = Math.min(tl.y, br.y)
+    vw = Math.abs(br.x - tl.x)
+    vh = Math.abs(br.y - tl.y)
+  } else if (cropParams.value) {
+    const cp = cropParams.value
+    const tl = imageCoordToViewer(cp.x, cp.y, viewer)
+    const br = imageCoordToViewer(cp.x + cp.w, cp.y + cp.h, viewer)
+    if (!tl || !br) return { display: 'none' }
+    vx = Math.min(tl.x, br.x)
+    vy = Math.min(tl.y, br.y)
+    vw = Math.abs(br.x - tl.x)
+    vh = Math.abs(br.y - tl.y)
+  } else {
+    return { display: 'none' }
+  }
+
+  if (vw < 2 || vh < 2) return { display: 'none' }
+
+  return {
+    left: `${vx}px`,
+    top: `${vy}px`,
+    width: `${vw}px`,
+    height: `${vh}px`,
+    display: 'block',
+  }
+})
 
 const lensStyle = computed(() => {
   if (!showMagnifier.value || !selectedImage.value) return { display: 'none' }
@@ -295,7 +436,6 @@ const lensStyle = computed(() => {
   const rect = getImageRenderRect(viewer)
   if (!rect) return { display: 'none' }
 
-  // 检查鼠标是否在缩放后图片可见范围内
   const bounds = getZoomedImageBounds(viewer)
   if (!bounds) return { display: 'none' }
   if (mouseX.value < bounds.left || mouseX.value > bounds.right ||
@@ -303,18 +443,15 @@ const lensStyle = computed(() => {
     return { display: 'none' }
   }
 
-  // 带缩放/平移校正的原图坐标
   const coord = getZoomedImageCoord(mouseX.value, mouseY.value, viewer, rect)
   if (!coord) return { display: 'none' }
 
   const natX = coord.natX
   const natY = coord.natY
 
-  // 背景偏移：让原图 (natX, natY) 对准放大镜圆心
   const bgPosX = MAGNIFIER_SIZE / 2 - natX * MAGNIFIER_ZOOM
   const bgPosY = MAGNIFIER_SIZE / 2 - natY * MAGNIFIER_ZOOM
 
-  // 放大镜位置：默认右下偏移，贴边自动翻转
   const viewerW = viewer.clientWidth
   const viewerH = viewer.clientHeight
   let lensLeft = mouseX.value + 15
@@ -333,6 +470,20 @@ const lensStyle = computed(() => {
     display: 'block',
   }
 })
+
+// === 生命周期 ===
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup', onDragEnd)
+  window.removeEventListener('keydown', onWindowKeyDown)
+  window.removeEventListener('keyup', onWindowKeyUp)
+  _pixelCanvas = null
+  _pixelCtx = null
+})
+
+// 全局 Ctrl 键监听
+window.addEventListener('keydown', onWindowKeyDown)
+window.addEventListener('keyup', onWindowKeyUp)
 </script>
 
 <template>
@@ -346,10 +497,10 @@ const lensStyle = computed(() => {
 
       <el-divider class="tool-divider" />
 
-      <el-tooltip content="剪裁（即将上线）" placement="right" :show-after="300">
-        <el-button :icon="Scissor" circle disabled />
+      <el-tooltip content="剪裁（Ctrl+拖拽选取区域）" placement="right" :show-after="300">
+        <el-button :icon="Scissor" circle :type="cropMode ? 'primary' : 'default'" @click="toggleCropMode" />
       </el-tooltip>
-      <span class="tool-label disabled">剪裁</span>
+      <span class="tool-label" :class="{ active: cropMode }">剪裁</span>
 
       <el-divider class="tool-divider" />
 
@@ -394,7 +545,7 @@ const lensStyle = computed(() => {
     <div
       ref="viewerEl"
       class="image-viewer"
-      :class="{ 'is-dragging': isDragging }"
+      :class="{ 'is-dragging': isDragging || isCropping }"
       @mousemove="onViewerMouseMove"
       @mouseleave="onViewerMouseLeave"
       @wheel.prevent="onWheel"
@@ -403,11 +554,13 @@ const lensStyle = computed(() => {
       @dblclick="resetViewerTransform"
     >
       <template v-if="selectedImage">
-        <!-- 放大镜勾选框 -->
+        <!-- 顶部工具栏 -->
         <div class="viewer-toolbar">
           <el-checkbox v-model="magnifierEnabled" size="small">🔍 放大镜</el-checkbox>
           <span v-if="isZoomed" class="zoom-badge">{{ zoomPercent }}</span>
+          <span v-if="cropMode" class="crop-badge">✂️ 剪裁模式</span>
         </div>
+
         <img
           :src="selectedSrc"
           class="viewer-image"
@@ -415,6 +568,10 @@ const lensStyle = computed(() => {
           draggable="false"
           alt="screenshot"
         />
+
+        <!-- 剪切选区覆盖层 -->
+        <div class="crop-overlay" :style="cropOverlayStyle" />
+
         <!-- 放大镜镜片 -->
         <div v-show="showMagnifier && magnifierEnabled" class="magnifier-lens" :style="lensStyle">
           <div class="pixel-grid" />
@@ -423,6 +580,21 @@ const lensStyle = computed(() => {
             <span class="mi-coords">({{ pixelInfo.x }}, {{ pixelInfo.y }})</span>
             <span class="mi-swatch" :style="{ backgroundColor: pixelInfo.hex }" />
             <span class="mi-hex">{{ pixelInfo.hex }}</span>
+          </div>
+        </div>
+
+        <!-- 剪切参数面板 -->
+        <div v-if="cropParams && cropMode" class="crop-panel" @dblclick.stop>
+          <div class="crop-params-row">
+            <label>X <input v-model.number="cropParams.x" type="number" class="crop-input" /></label>
+            <label>Y <input v-model.number="cropParams.y" type="number" class="crop-input" /></label>
+            <label>W <input v-model.number="cropParams.w" type="number" class="crop-input" min="1" /></label>
+            <label>H <input v-model.number="cropParams.h" type="number" class="crop-input" min="1" /></label>
+          </div>
+          <div class="crop-file-row">
+            <span class="crop-file-label">文件名</span>
+            <input v-model="cropFileName" class="crop-input file-input" />
+            <el-button size="small" type="primary" @click="executeCrop">✂️ 执行剪切</el-button>
           </div>
         </div>
       </template>
@@ -460,6 +632,11 @@ const lensStyle = computed(() => {
 
 .tool-label.disabled {
   color: var(--color-text-placeholder);
+}
+
+.tool-label.active {
+  color: var(--color-primary);
+  font-weight: 600;
 }
 
 .tool-divider {
@@ -508,6 +685,7 @@ const lensStyle = computed(() => {
   background-color: #1a1a2e;
   overflow: hidden;
   position: relative;
+  user-select: none;
 }
 
 .viewer-image {
@@ -529,7 +707,7 @@ const lensStyle = computed(() => {
   cursor: grabbing;
 }
 
-/* 顶部工具栏（放大镜勾选 + 缩放比例） */
+/* 顶部工具栏 */
 .viewer-toolbar {
   position: absolute;
   top: 8px;
@@ -560,6 +738,91 @@ const lensStyle = computed(() => {
   padding: 0 6px;
   border-radius: 3px;
   line-height: 18px;
+}
+
+.crop-badge {
+  color: #409eff;
+  font-size: 11px;
+  background: rgba(64, 158, 255, 0.2);
+  padding: 0 6px;
+  border-radius: 3px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+/* 剪切选区覆盖层 */
+.crop-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 15;
+  border: 2px dashed #409eff;
+  background: rgba(64, 158, 255, 0.1);
+}
+
+/* 剪切参数面板 */
+.crop-panel {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 30;
+  background: rgba(30, 30, 50, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 280px;
+}
+
+.crop-params-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.crop-params-row label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: #aaa;
+  font-family: var(--editor-font-family, monospace);
+}
+
+.crop-input {
+  width: 52px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  color: #fff;
+  font-size: 11px;
+  font-family: var(--editor-font-family, monospace);
+  padding: 2px 4px;
+  outline: none;
+  text-align: center;
+}
+
+.crop-input:focus {
+  border-color: #409eff;
+}
+
+.crop-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.crop-file-label {
+  font-size: 11px;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.file-input {
+  flex: 1;
+  width: auto;
+  text-align: left;
 }
 
 /* 放大镜镜片 */
@@ -634,7 +897,7 @@ const lensStyle = computed(() => {
   transform: translateX(-50%);
 }
 
-/* 放大镜信息栏（坐标 + 颜色） */
+/* 放大镜信息栏 */
 .magnifier-info {
   position: absolute;
   bottom: 0;
