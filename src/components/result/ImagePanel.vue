@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { Delete, Camera, Scissor, Reading, Loading } from '@element-plus/icons-vue'
 import { useImageStore, type ImageEntry } from '@/stores/useImageStore'
@@ -11,7 +11,7 @@ const codeStore = useCodeStore()
 const selectedId = ref<string | null>(null)
 
 const MAGNIFIER_SIZE = 180
-const MAGNIFIER_ZOOM = 4
+const MAGNIFIER_ZOOM = 10
 
 // 新图片添加时自动选中预览
 watch(() => imageStore.images.length, (newLen, oldLen) => {
@@ -74,6 +74,22 @@ const pixelInfo = ref({ x: 0, y: 0, hex: '#000000' })
 let _pixelCanvas: HTMLCanvasElement | null = null
 let _pixelCtx: CanvasRenderingContext2D | null = null
 
+// === 缩放 / 平移 ===
+const viewerZoom = ref(1)
+const viewerPanX = ref(0)
+const viewerPanY = ref(0)
+const isDragging = ref(false)
+const dragStart = ref({ x: 0, y: 0, panX: 0, panY: 0 })
+
+function resetViewerTransform() {
+  viewerZoom.value = 1
+  viewerPanX.value = 0
+  viewerPanY.value = 0
+}
+
+// 切换图片时重置
+watch(selectedId, () => resetViewerTransform())
+
 // 计算图片在 viewer 中实际渲染区域（object-fit: contain 居中缩放）
 function getImageRenderRect(viewer: HTMLElement) {
   const { width: natW, height: natH } = imageNaturalSize.value
@@ -89,6 +105,42 @@ function getImageRenderRect(viewer: HTMLElement) {
     h = viewerH; w = viewerH * imgAspect; x = (viewerW - w) / 2; y = 0
   }
   return { x, y, w, h }
+}
+
+// 带缩放/平移校正的原图坐标映射
+function getZoomedImageCoord(mx: number, my: number, viewer: HTMLElement, rect?: { x: number; y: number; w: number; h: number }) {
+  const r = rect || getImageRenderRect(viewer)
+  if (!r) return null
+  const { width: natW, height: natH } = imageNaturalSize.value
+  if (!natW || !natH) return null
+  const z = viewerZoom.value
+  const px = viewerPanX.value
+  const py = viewerPanY.value
+  // 鼠标偏移 image 中心 → 缩放到 zoom=1 空间 → 映射到原图坐标
+  const cx = viewer.clientWidth / 2
+  const cy = viewer.clientHeight / 2
+  const offsetX = mx - cx - px
+  const offsetY = my - cy - py
+  const natX = natW / 2 + (offsetX / z) * (natW / r.w)
+  const natY = natH / 2 + (offsetY / z) * (natH / r.h)
+  return { natX, natY }
+}
+
+// 缩放后图片在 viewer 中的可视边界
+function getZoomedImageBounds(viewer: HTMLElement) {
+  const rect = getImageRenderRect(viewer)
+  if (!rect || !imageNaturalSize.value.width || !imageNaturalSize.value.height) return null
+  const z = viewerZoom.value
+  const px = viewerPanX.value
+  const py = viewerPanY.value
+  const cx = viewer.clientWidth / 2
+  const cy = viewer.clientHeight / 2
+  return {
+    left: cx + px - rect.w * z / 2,
+    right: cx + px + rect.w * z / 2,
+    top: cy + py - rect.h * z / 2,
+    bottom: cy + py + rect.h * z / 2,
+  }
 }
 
 // 预加载图片获取自然尺寸
@@ -136,7 +188,10 @@ function samplePixel(natX: number, natY: number) {
   pixelInfo.value = { x: cx, y: cy, hex }
 }
 
+// === 鼠标事件 ===
 function onViewerMouseMove(e: MouseEvent) {
+  if (isDragging.value) return // 拖拽中由 onDragMove 处理
+
   if (!magnifierEnabled.value || !viewerEl.value) return
   const rect = viewerEl.value.getBoundingClientRect()
   const mx = e.clientX - rect.left
@@ -148,19 +203,85 @@ function onViewerMouseMove(e: MouseEvent) {
   // 计算原图坐标并采样像素颜色
   const viewer = viewerEl.value
   const imgRect = getImageRenderRect(viewer)
-  if (!imgRect || !imageNaturalSize.value.width || !imageNaturalSize.value.height) return
-  if (mx < imgRect.x || mx > imgRect.x + imgRect.w ||
-      my < imgRect.y || my > imgRect.y + imgRect.h) return
-  const scaleX = imageNaturalSize.value.width / imgRect.w
-  const scaleY = imageNaturalSize.value.height / imgRect.h
-  const natX = (mx - imgRect.x) * scaleX
-  const natY = (my - imgRect.y) * scaleY
-  samplePixel(natX, natY)
+  const bounds = getZoomedImageBounds(viewer)
+  if (!imgRect || !bounds) return
+  if (mx < bounds.left || mx > bounds.right || my < bounds.top || my > bounds.bottom) return
+
+  const coord = getZoomedImageCoord(mx, my, viewer, imgRect)
+  if (!coord) return
+  samplePixel(coord.natX, coord.natY)
 }
 
 function onViewerMouseLeave() {
   showMagnifier.value = false
 }
+
+function onWheel(e: WheelEvent) {
+  const viewer = viewerEl.value
+  if (!viewer) return
+  const rect = viewer.getBoundingClientRect()
+  const viewerCenterX = viewer.clientWidth / 2
+  const viewerCenterY = viewer.clientHeight / 2
+  // 鼠标相对 viewer 中心
+  const vx = e.clientX - rect.left - viewerCenterX
+  const vy = e.clientY - rect.top - viewerCenterY
+  const oldZ = viewerZoom.value
+  const delta = e.deltaY > 0 ? -0.2 : 0.2
+  const newZ = Math.max(0.2, Math.min(10, oldZ + delta))
+  if (newZ === oldZ) return
+  // 保持鼠标位置在原图上的对应点不变
+  viewerPanX.value = vx * (1 - newZ / oldZ) + viewerPanX.value * newZ / oldZ
+  viewerPanY.value = vy * (1 - newZ / oldZ) + viewerPanY.value * newZ / oldZ
+  viewerZoom.value = newZ
+}
+
+function onMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return
+  isDragging.value = true
+  showMagnifier.value = false
+  dragStart.value = { x: e.clientX, y: e.clientY, panX: viewerPanX.value, panY: viewerPanY.value }
+  window.addEventListener('mousemove', onDragMove)
+  window.addEventListener('mouseup', onDragEnd)
+}
+
+function onDragMove(e: MouseEvent) {
+  if (!isDragging.value) return
+  const dx = e.clientX - dragStart.value.x
+  const dy = e.clientY - dragStart.value.y
+  viewerPanX.value = dragStart.value.panX + dx
+  viewerPanY.value = dragStart.value.panY + dy
+}
+
+function onDragEnd() {
+  isDragging.value = false
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup', onDragEnd)
+}
+
+// 组件卸载时清理
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onDragMove)
+  window.removeEventListener('mouseup', onDragEnd)
+  _pixelCanvas = null
+  _pixelCtx = null
+})
+
+// 缩放的 image 样式
+const isZoomed = computed(() => viewerZoom.value > 1.01)
+
+const imageTransformStyle = computed(() => {
+  const z = viewerZoom.value
+  const cursor = isZoomed.value
+    ? (isDragging.value ? 'grabbing' : 'grab')
+    : 'default'
+  return {
+    transform: `translate(${viewerPanX.value}px, ${viewerPanY.value}px) scale(${z})`,
+    cursor,
+  }
+})
+
+// 缩放百分比文字
+const zoomPercent = computed(() => `${Math.round(viewerZoom.value * 100)}%`)
 
 const lensStyle = computed(() => {
   if (!showMagnifier.value || !selectedImage.value) return { display: 'none' }
@@ -174,21 +295,20 @@ const lensStyle = computed(() => {
   const rect = getImageRenderRect(viewer)
   if (!rect) return { display: 'none' }
 
-  const { x: imgX, y: imgY, w: imgW, h: imgH } = rect
-
-  // 鼠标不在图片范围内 → 不显示放大镜
-  if (
-    mouseX.value < imgX || mouseX.value > imgX + imgW ||
-    mouseY.value < imgY || mouseY.value > imgY + imgH
-  ) {
+  // 检查鼠标是否在缩放后图片可见范围内
+  const bounds = getZoomedImageBounds(viewer)
+  if (!bounds) return { display: 'none' }
+  if (mouseX.value < bounds.left || mouseX.value > bounds.right ||
+      mouseY.value < bounds.top || mouseY.value > bounds.bottom) {
     return { display: 'none' }
   }
 
-  // 映射鼠标位置到原图坐标
-  const scaleX = natW / imgW
-  const scaleY = natH / imgH
-  const natX = (mouseX.value - imgX) * scaleX
-  const natY = (mouseY.value - imgY) * scaleY
+  // 带缩放/平移校正的原图坐标
+  const coord = getZoomedImageCoord(mouseX.value, mouseY.value, viewer, rect)
+  if (!coord) return { display: 'none' }
+
+  const natX = coord.natX
+  const natY = coord.natY
 
   // 背景偏移：让原图 (natX, natY) 对准放大镜圆心
   const bgPosX = MAGNIFIER_SIZE / 2 - natX * MAGNIFIER_ZOOM
@@ -274,15 +394,27 @@ const lensStyle = computed(() => {
     <div
       ref="viewerEl"
       class="image-viewer"
+      :class="{ 'is-dragging': isDragging }"
       @mousemove="onViewerMouseMove"
       @mouseleave="onViewerMouseLeave"
+      @wheel.prevent="onWheel"
+      @mousedown="onMouseDown"
+      @mouseup="onDragEnd"
+      @dblclick="resetViewerTransform"
     >
       <template v-if="selectedImage">
         <!-- 放大镜勾选框 -->
-        <div class="magnifier-toggle">
+        <div class="viewer-toolbar">
           <el-checkbox v-model="magnifierEnabled" size="small">🔍 放大镜</el-checkbox>
+          <span v-if="isZoomed" class="zoom-badge">{{ zoomPercent }}</span>
         </div>
-        <el-image :src="selectedSrc" fit="contain" class="viewer-image" />
+        <img
+          :src="selectedSrc"
+          class="viewer-image"
+          :style="imageTransformStyle"
+          draggable="false"
+          alt="screenshot"
+        />
         <!-- 放大镜镜片 -->
         <div v-show="showMagnifier && magnifierEnabled" class="magnifier-lens" :style="lensStyle">
           <div class="pixel-grid" />
@@ -379,14 +511,12 @@ const lensStyle = computed(() => {
 }
 
 .viewer-image {
-  width: 100%;
-  height: 100%;
-}
-
-.viewer-image :deep(img) {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .viewer-empty {
@@ -395,24 +525,41 @@ const lensStyle = computed(() => {
   justify-content: center;
 }
 
-/* 放大镜勾选框 */
-.magnifier-toggle {
+.image-viewer.is-dragging {
+  cursor: grabbing;
+}
+
+/* 顶部工具栏（放大镜勾选 + 缩放比例） */
+.viewer-toolbar {
   position: absolute;
   top: 8px;
   left: 8px;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: rgba(0, 0, 0, 0.5);
   border-radius: 4px;
   padding: 2px 8px;
 }
 
-.magnifier-toggle :deep(.el-checkbox__label) {
+.viewer-toolbar :deep(.el-checkbox__label) {
   color: #fff;
   font-size: 12px;
 }
 
-.magnifier-toggle :deep(.el-checkbox__inner) {
+.viewer-toolbar :deep(.el-checkbox__inner) {
   border-color: rgba(255, 255, 255, 0.6);
+}
+
+.zoom-badge {
+  color: #fff;
+  font-size: 11px;
+  font-family: var(--editor-font-family, monospace);
+  background: rgba(255, 255, 255, 0.15);
+  padding: 0 6px;
+  border-radius: 3px;
+  line-height: 18px;
 }
 
 /* 放大镜镜片 */
@@ -434,7 +581,7 @@ const lensStyle = computed(() => {
   inset: 0;
   pointer-events: none;
   border-radius: inherit;
-  --grid-size: 4px;
+  --grid-size: 10px;
   background-image:
     repeating-linear-gradient(
       to bottom,
@@ -472,7 +619,6 @@ const lensStyle = computed(() => {
 }
 
 .magnifier-crosshair::before {
-  /* 横线 */
   width: 100%;
   height: 1px;
   top: 50%;
@@ -481,7 +627,6 @@ const lensStyle = computed(() => {
 }
 
 .magnifier-crosshair::after {
-  /* 竖线 */
   width: 1px;
   height: 100%;
   top: 0;
