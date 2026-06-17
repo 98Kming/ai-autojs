@@ -1,30 +1,33 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useWebSocketStore } from '@/stores/useWebSocketStore'
 import { useCodeStore } from '@/stores/useCodeStore'
 import { useHistoryStore } from '@/stores/useHistoryStore'
+import { useImageStore } from '@/stores/useImageStore'
 import { useWebSocket } from '@/composables/useWebSocket'
-import type { HistoryEntry, ResultMessage } from '@/types/autojs'
+import { SCREENSHOT_TEMPLATE, type HistoryEntry, type ResultMessage } from '@/types/autojs'
 import ConnectionPanel from '@/components/connection/ConnectionPanel.vue'
 import CodeEditor from '@/components/editor/CodeEditor.vue'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import ResultPanel from '@/components/result/ResultPanel.vue'
+import ImagePanel from '@/components/result/ImagePanel.vue'
 import HistoryDrawer from '@/components/history/HistoryDrawer.vue'
 
 const wsStore = useWebSocketStore()
 const codeStore = useCodeStore()
 const historyStore = useHistoryStore()
+const imageStore = useImageStore()
 
-// --- WebSocket 实例化 ---
+const activeTab = ref('code')
+
+// --- WebSocket ---
 const ws = useWebSocket()
 
-// 注册结果回调：收到服务端返回后更新 store
 ws.onResult((msg: ResultMessage) => {
   codeStore.setExecuting(false)
   codeStore.setResult(msg)
 
-  // 更新历史记录
   historyStore.addEntry({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     code: codeStore.content,
@@ -35,6 +38,13 @@ ws.onResult((msg: ResultMessage) => {
     timestamp: Date.now(),
   })
 
+  // 图片结果 → 图片列表
+  if (msg.dataType === 'base64' && msg.mime?.startsWith('image/') && msg.status === 'success') {
+    imageStore.addImage(msg.data, msg.mime, codeStore.content)
+    ElMessage.success('截图已保存')
+    return
+  }
+
   if (msg.status === 'error') {
     ElMessage.error('执行出错: ' + (msg.data || '').slice(0, 100))
   } else {
@@ -42,21 +52,14 @@ ws.onResult((msg: ResultMessage) => {
   }
 })
 
-// --- 连接 / 断开 ---
-function onConnect() {
-  ws.connect()
-}
+// --- 连接 ---
+function onConnect() { ws.connect() }
+function onDisconnect() { ws.disconnect() }
 
-function onDisconnect() {
-  ws.disconnect()
-}
-
-// --- 运行代码 ---
+// --- 运行 ---
 function onRun() {
   if (!codeStore.content.trim()) return
   codeStore.setExecuting(true)
-
-  // 先添加一条 pending 状态的历史
   historyStore.addEntry({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     code: codeStore.content,
@@ -65,7 +68,6 @@ function onRun() {
     status: 'pending',
     timestamp: Date.now(),
   })
-
   const sent = ws.sendCode(codeStore.content)
   if (!sent) {
     codeStore.setExecuting(false)
@@ -73,30 +75,25 @@ function onRun() {
   }
 }
 
-function onClear() {
-  codeStore.clearContent()
-}
-
+function onClear() { codeStore.clearContent() }
 function onFormat() {
   try {
     const lines = codeStore.content.split('\n')
-    const formatted = lines.map(line => line.trim()).join('\n')
-    codeStore.setContent(formatted)
-  } catch {
-    // 格式化失败静默处理
-  }
+    codeStore.setContent(lines.map(line => line.trim()).join('\n'))
+  } catch { /* ignore */ }
 }
 
 function onReRun(entry: HistoryEntry) {
   codeStore.setContent(entry.code)
 }
 
-// --- beforeunload：页面关闭时断开连接 ---
-function onBeforeUnload() {
-  ws.disconnect()
+// --- 截图（从 ImagePanel 触发，直接执行不跳转） ---
+function onTriggerScreenshot() {
+  codeStore.setContent(SCREENSHOT_TEMPLATE)
+  onRun()
 }
 
-// --- 键盘快捷键 ---
+// --- 快捷键 ---
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === 'Enter') {
     e.preventDefault()
@@ -104,11 +101,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
 }
 
+function onBeforeUnload() { ws.disconnect() }
+
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('beforeunload', onBeforeUnload)
 })
-
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('beforeunload', onBeforeUnload)
@@ -121,21 +119,40 @@ onUnmounted(() => {
       @connect="onConnect"
       @disconnect="onDisconnect"
     />
-    <div class="workspace">
-      <div class="editor-section">
-        <EditorToolbar
-          @run="onRun"
-          @clear="onClear"
-          @format="onFormat"
-        />
-        <div class="editor-body">
-          <CodeEditor />
+
+    <el-tabs v-model="activeTab" class="main-tabs">
+      <el-tab-pane label="代码执行" name="code">
+        <div class="code-workspace">
+          <div class="editor-section">
+            <EditorToolbar
+              @run="onRun"
+              @clear="onClear"
+              @format="onFormat"
+            />
+            <div class="editor-body">
+              <CodeEditor />
+            </div>
+          </div>
+          <div class="result-section">
+            <ResultPanel />
+          </div>
         </div>
-      </div>
-      <div class="result-section">
-        <ResultPanel />
-      </div>
-    </div>
+      </el-tab-pane>
+
+      <el-tab-pane name="image">
+        <template #label>
+          <span>图片处理</span>
+          <el-badge
+            v-if="imageStore.images.length > 0"
+            :value="imageStore.images.length"
+            class="tab-badge"
+            type="info"
+          />
+        </template>
+        <ImagePanel @trigger-screenshot="onTriggerScreenshot" />
+      </el-tab-pane>
+    </el-tabs>
+
     <HistoryDrawer
       v-model:visible="wsStore.historyVisible"
       @re-run="onReRun"
@@ -150,9 +167,36 @@ onUnmounted(() => {
   height: 100%;
 }
 
-.workspace {
+.main-tabs {
   flex: 1;
   display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.main-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 16px;
+  background-color: var(--color-bg-primary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.main-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  overflow: hidden;
+}
+
+.main-tabs :deep(.el-tab-pane) {
+  height: 100%;
+}
+
+.tab-badge {
+  margin-left: 6px;
+}
+
+.code-workspace {
+  display: flex;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -176,19 +220,16 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-/* 响应式：窄屏上下堆叠 */
 @media (max-width: 900px) {
-  .workspace {
+  .code-workspace {
     flex-direction: column;
   }
-
   .editor-section {
     border-right: none;
     border-bottom: 1px solid var(--color-border);
     flex: none;
     height: 50%;
   }
-
   .result-section {
     flex: none;
     height: 50%;

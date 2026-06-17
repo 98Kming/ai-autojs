@@ -8,14 +8,12 @@ const codeStore = useCodeStore()
 const resultList = ref<ResultEntry[]>([])
 const listRef = ref<HTMLDivElement | null>(null)
 
-// 实时结果收集
 watch(() => codeStore.lastResult, (entry) => {
   if (entry) {
     resultList.value.unshift(entry)
   }
 })
 
-// 自动滚动到最新结果
 watch(() => resultList.value.length, async () => {
   await nextTick()
   if (listRef.value) {

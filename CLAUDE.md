@@ -1,6 +1,6 @@
 # AI-AutoJS 助手
 
-基于 Vue 3 + TypeScript + Element Plus 的 AutoJS6 WebSocket 远程代码执行工具。
+基于 Vue 3 + TypeScript + Element Plus 的 AutoJS6 WebSocket 远程代码执行工具，支持截图管理和图片处理。
 
 ## 技术栈
 
@@ -29,25 +29,44 @@
     ├── stores/                    # Pinia stores
     │   ├── useWebSocketStore.ts   # 连接状态 + 配置 + 历史抽屉开关
     │   ├── useCodeStore.ts        # 编辑器内容 + 执行状态
-    │   └── useHistoryStore.ts     # 执行历史（localStorage 持久化，上限200条）
+    │   ├── useHistoryStore.ts     # 执行历史（localStorage 持久化，上限200条）
+    │   └── useImageStore.ts       # 截图列表（localStorage 持久化，4MB 容量保护，上限20张）
     ├── composables/               # Composition API hooks
     │   ├── useWebSocket.ts        # WebSocket 生命周期（连接/发送/30s心跳/30s执行超时）
     │   └── useAutoReconnect.ts    # 指数退避 + 随机抖动 自动重连
     ├── types/
-    │   └── autojs.ts              # 消息协议类型定义 + 默认配置
+    │   └── autojs.ts              # 消息协议类型 + 默认配置 + SCREENSHOT_TEMPLATE 常量
     ├── utils/
     │   └── storage.ts             # localStorage 封装（JSON序列化 + QuotaExceededError处理）
     ├── views/
-    │   └── HomeView.vue           # 主工作台，组合所有组件，实例化 useWebSocket
+    │   └── HomeView.vue           # 主工作台，顶层 tabs 切换「代码执行」/「图片处理」
     ├── components/
     │   ├── layout/AppHeader.vue
     │   ├── connection/            # ConnectionPanel, ConnectionBadge
     │   ├── editor/                # CodeEditor (textarea + 行号标尺), EditorToolbar
-    │   ├── result/                # ResultPanel, ResultItem (文本/图片/HexDump)
+    │   ├── result/                # ResultPanel, ResultItem, ImagePanel, ImageCard
     │   └── history/               # HistoryDrawer (el-drawer), HistoryItem
     └── styles/
         └── variables.css          # CSS 自定义属性
 ```
+
+## UI 布局
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ AppHeader  [Logo]                     [状态灯] [历史]     │
+├──────────────────────────────────────────────────────────┤
+│ ConnectionPanel  [ws://127.0.0.1:9318] [连接] [断开]      │
+├──────────────────────────────────────────────────────────┤
+│ [ 代码执行 ]  [ 图片处理 (N) ]              ← 顶层 tabs   │
+├──────────────────────────┬───────────────────────────────┤
+│ EditorToolbar            │ ResultPanel                   │
+│ [格式化][清空][运行]      │ ResultItem × N                │
+│ CodeEditor               │                               │
+└──────────────────────────┴───────────────────────────────┘
+```
+
+图片处理 tab 为三栏布局（工具 | 缩略图列表 | 大图展示），工具栏预留剪裁/OCR 扩展位。
 
 ## WebSocket 协议（端口 9318）
 
@@ -55,6 +74,7 @@
 - 返回：`{"type":"result","data":"<output>","status":"success|error","dataType":"text|base64","mime":"..."}`
 - 心跳：`{"type":"ping"}` / `{"type":"pong"}`（文本帧，非 WebSocket opcode ping/pong）
 - 二进制结果：Base64 编码 + `dataType:"base64"` + `mime` 字段
+- Java `byte[]` 通过 `getClass().getName() === '[B'` 检测，`images.toBytes()` 输出自动识别为 `image/png`
 - 服务端支持返回值类型：字符串/数字/对象（text），Bitmap/byte[]/ByteArrayInputStream/File（base64）
 
 ## 开发命令
@@ -81,9 +101,16 @@ npm run preview    # 预览生产构建
 4. 连接成功后，悬浮按钮显示 "已连接 1 台设备"
 5. 编写代码，Ctrl+Enter 运行，结果实时展示
 
+### 截图功能
+
+1. 切换到「图片处理」tab
+2. 点击左侧工具栏「📷 截图」按钮
+3. 自动执行截图，完成后图片出现在缩略图列表，右侧大图预览
+4. 支持下载、删除，页面刷新后图片从 localStorage 恢复（最多保留 20 张 / 4MB）
+
 ## 常用代码模板
 
-### 截图
+### 截图（已内置到「图片处理」tab）
 ```js
 (function () {
     if (!requestScreenCapture()) return "请求截图失败";
@@ -114,8 +141,9 @@ npm run preview    # 预览生产构建
 | `performHandshake` | 逐字节读取 HTTP Upgrade 请求，SHA-1+Base64 计算 Accept Key，返回 101 |
 | `decodeFrame` | 解析 WebSocket 帧（处理 client→server 的 mask XOR） |
 | `encodeFrame` | 构建 WebSocket 帧为 Java byte[]（不 mask，server→client） |
+| `isJavaByteArray` | 通过 `getClass().getName() === '[B'` 检测 Java 原生 byte[] |
 | `executeCode` | `eval()` 执行 JS 代码，劫持 `console.log`，检测二进制返回值 |
-| `handleClient` | 单连接生命周期：握手 → 读帧 → 执行 → 写帧 |
+| `handleClient` | 单连接生命周期：握手 → 读帧（command/ping/close） → 执行 → 写帧 |
 | `acceptLoop` | 主线程阻塞 accept()，每个客户端 `threads.start()` 处理 |
 | `createFloatyWindow` | `floaty.window()` 悬浮按钮（停止服务 + 连接数显示） |
 
@@ -126,9 +154,10 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 | ❌ 不可用 | ✅ 替代方案 |
 |---|---|
 | `e instanceof java.net.SocketTimeoutException` | `String(e).indexOf('SocketTimeoutException') >= 0` |
+| `e instanceof java.net.BindException` | `String(e).indexOf('BindException') >= 0` |
 | `java.lang.reflect.Array.newInstance(...).constructor(jsArray)` | 逐个赋值 `byteArray[k] = new java.lang.Integer(val).byteValue()` |
-| `new java.lang.String(text).getBytes('UTF-8')` 中文字符 | 正常可用，UTF-8 编码正确 |
 | `BufferedReader` 读取握手头 | 逐字节读到 `\r\n\r\n` 分隔符，避免缓冲破坏后续帧数据 |
+| `value instanceof byte[]`（检测 Java 数组类型） | `isJavaByteArray(value)` → `getClass().getName() === '[B'` |
 
 **Java byte 赋值陷阱**：JS 数字是 unsigned（0-255），Java byte 是 signed（-128~127）。值超过 127 时必须用 `new java.lang.Integer(n).byteValue()` 做截断转换，否则抛 `Cannot convert 129 to java.lang.Byte`。
 
@@ -140,3 +169,4 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 - WebSocket 相关逻辑集中在 `composables/useWebSocket.ts`，组件通过 store 读取状态
 - 子组件通过 Pinia store 获取状态，不通过 props 跨层传递
 - CSS 变量统一定义在 `styles/variables.css`
+- 公共代码模板常量定义在 `types/autojs.ts`

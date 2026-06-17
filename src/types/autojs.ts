@@ -70,3 +70,14 @@ export interface HistoryEntry {
   status: 'success' | 'error' | 'pending'
   timestamp: number
 }
+
+// ===== 代码模板 =====
+
+/** 截图代码模板 */
+export const SCREENSHOT_TEMPLATE = `(function () {
+    if (!requestScreenCapture()) return "请求截图失败";
+    let img = images.captureScreen();
+    let arr = images.toBytes(img);
+    img.recycle();
+    return arr;
+}())`

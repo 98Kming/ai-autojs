@@ -228,12 +228,22 @@ function sendCloseFrame(outputStream) {
     }
 }
 
+// ===== 检测 Java byte[] 数组 =====
+function isJavaByteArray(value) {
+    try {
+        return value != null && value.getClass && value.getClass().getName() === '[B';
+    } catch (e) {
+        return false;
+    }
+}
+
 // ===== 检测二进制结果 =====
 function isBinaryResult(value) {
     if (value === null || value === undefined) return false;
     if (value instanceof android.graphics.Bitmap) return true;
     if (value instanceof java.io.ByteArrayInputStream) return true;
     if (value instanceof java.io.File) return true;
+    if (isJavaByteArray(value)) return true;
     // 检测 JavaScript number 数组（byte 范围）
     if (Array.isArray(value) && value.length > 0 &&
         value.every(function (v) { return typeof v === 'number' && v >= 0 && v <= 255; })) {
@@ -244,6 +254,8 @@ function isBinaryResult(value) {
 
 // ===== 转为 byte[] =====
 function toByteArray(value) {
+    // Java 原生 byte[] — 直接返回
+    if (isJavaByteArray(value)) return value;
     if (value instanceof android.graphics.Bitmap) {
         var stream = new java.io.ByteArrayOutputStream();
         value.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream);
@@ -272,6 +284,8 @@ function toByteArray(value) {
 // ===== 检测 MIME 类型 =====
 function detectMime(value) {
     if (value instanceof android.graphics.Bitmap) return 'image/png';
+    // Java byte[] — AutoJS6 的 images.toBytes() 输出为 PNG
+    if (isJavaByteArray(value)) return 'image/png';
     if (value instanceof java.io.File) {
         var name = value.getName().toLowerCase();
         if (name.endsWith('.png')) return 'image/png';
