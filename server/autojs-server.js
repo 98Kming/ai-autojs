@@ -166,41 +166,35 @@ function decodeFrame(inputStream) {
 }
 
 // ===== WebSocket 帧编码（服务端→客户端，不 mask） =====
+// payloadBytes 为 Java byte[] 时使用 ByteArrayOutputStream 避免逐字节 JS 循环
 function encodeFrame(opcode, payloadBytes) {
-    var frame = [];
-    // 第一个字节：FIN + opcode
-    frame.push(0x80 | opcode);
-
     var len = payloadBytes.length;
+    var headerSize = len < 126 ? 2 : (len < 65536 ? 4 : 10);
+    var baos = new java.io.ByteArrayOutputStream(headerSize + len);
+
+    // 第一个字节：FIN + opcode
+    baos.write(0x80 | opcode);
+
+    // 长度编码
     if (len < 126) {
-        frame.push(len);
+        baos.write(len);
     } else if (len < 65536) {
-        frame.push(126);
-        frame.push((len >> 8) & 0xFF);
-        frame.push(len & 0xFF);
+        baos.write(126);
+        baos.write((len >> 8) & 0xFF);
+        baos.write(len & 0xFF);
     } else {
-        frame.push(127);
-        // 64位长度（只使用低32位）
-        for (var i = 0; i < 4; i++) frame.push(0);
-        frame.push((len >> 24) & 0xFF);
-        frame.push((len >> 16) & 0xFF);
-        frame.push((len >> 8) & 0xFF);
-        frame.push(len & 0xFF);
+        baos.write(127);
+        for (var i = 0; i < 4; i++) baos.write(0);
+        baos.write((len >> 24) & 0xFF);
+        baos.write((len >> 16) & 0xFF);
+        baos.write((len >> 8) & 0xFF);
+        baos.write(len & 0xFF);
     }
 
-    // payload（服务端不需 mask）
-    for (var j = 0; j < len; j++) {
-        frame.push(payloadBytes[j] & 0xFF);
-    }
+    // payload（服务端不需 mask）— 直接写入 Java byte[]，零 JS 循环
+    baos.write(payloadBytes, 0, len);
 
-    // 构建 Java byte[] 数组
-    // JS 数字是 unsigned (0-255)，Java byte 是 signed (-128-127)
-    // 用 java.lang.Integer.byteValue() 做截断转换
-    var byteArray = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, frame.length);
-    for (var k = 0; k < frame.length; k++) {
-        byteArray[k] = new java.lang.Integer(frame[k]).byteValue();
-    }
-    return byteArray;
+    return baos.toByteArray();
 }
 
 // ===== 发送文本帧 =====
@@ -292,8 +286,15 @@ function toByteArray(value) {
 // ===== 检测 MIME 类型 =====
 function detectMime(value) {
     if (value instanceof android.graphics.Bitmap) return 'image/png';
-    // Java byte[] — AutoJS6 的 images.toBytes() 输出为 PNG
-    if (isJavaByteArray(value)) return 'image/png';
+    // Java byte[] — 通过魔数检测实际格式（PNG/JPEG/BMP/GIF）
+    if (isJavaByteArray(value) && value.length >= 4) {
+        var b0 = value[0] & 0xFF, b1 = value[1] & 0xFF, b2 = value[2] & 0xFF, b3 = value[3] & 0xFF;
+        if (b0 === 0xFF && b1 === 0xD8 && b2 === 0xFF) return 'image/jpeg';
+        if (b0 === 0x89 && b1 === 0x50 && b2 === 0x4E && b3 === 0x47) return 'image/png';
+        if (b0 === 0x42 && b1 === 0x4D) return 'image/bmp';
+        if (b0 === 0x47 && b1 === 0x49 && b2 === 0x46) return 'image/gif';
+        return 'image/png'; // 默认 fallback
+    }
     if (value instanceof java.io.File) {
         var name = value.getName().toLowerCase();
         if (name.endsWith('.png')) return 'image/png';
@@ -384,8 +385,6 @@ function handleClient(socket) {
 
     activeClients.push(clientRecord);
     log('新连接: ' + clientId + ' (当前: ' + activeClients.length + ' 台)');
-    updateFloatStatus();
-
     try {
         // WebSocket 握手
         performHandshake(inputStream, outputStream);
@@ -433,7 +432,6 @@ function handleClient(socket) {
         removeClient(clientId);
         try { socket.close(); } catch (e) { /* ignore */ }
         log('断开连接: ' + clientId + ' (剩余: ' + activeClients.length + ' 台)');
-        updateFloatStatus();
     }
 }
 
@@ -468,41 +466,49 @@ function disconnectAllClients() {
 }
 
 // ===== 悬浮窗 UI =====
-function updateFloatStatus() {
-    if (!floatyWindow) return;
-    try {
-        var count = activeClients.length;
-        var statusText;
-        if (count === 0) {
-            statusText = '等待连接';
-        } else {
-            statusText = '已连接 ' + count + ' 台设备';
-        }
-        floatyWindow.statusText.setText(statusText);
-    } catch (e) { /* ignore */ }
-}
-
 function createFloatyWindow() {
     try {
         floatyWindow = floaty.window(
-            <frame gravity='center'>
-                <vertical padding='8dp' bg='#CC333333' >
-                    <text id='statusText' text='等待连接' textColor='#FFFFFF' textSize='12sp' gravity='center' />
-                    <button id='stopBtn' text='停止服务' textColor='#FF6B6B' textSize='14sp' />
-                </vertical>
+            <frame>
+                <button id='stopBtn' text='停止' textColor='#FF6B6B' textSize='12sp' w='48dp' h='36dp' bg='#CC333333' gravity='center' />
             </frame>
         );
 
-        floatyWindow.stopBtn.click(function () {
-            dialogs.confirm('提示', '确定停止 Autojs 服务并断开所有连接？', function () {
-                stopServer();
-            });
+        // 拖拽 + 点击处理
+        var _touchX = 0, _touchY = 0, _touchMoved = false;
+        floatyWindow.stopBtn.setOnTouchListener(function(view, event) {
+            var action = event.getAction();
+            switch (action) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    _touchX = event.getRawX();
+                    _touchY = event.getRawY();
+                    _touchMoved = false;
+                    return true;
+                case android.view.MotionEvent.ACTION_MOVE:
+                    var dx = event.getRawX() - _touchX;
+                    var dy = event.getRawY() - _touchY;
+                    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                        _touchMoved = true;
+                        floatyWindow.setPosition(floatyWindow.getX() + dx, floatyWindow.getY() + dy);
+                        _touchX = event.getRawX();
+                        _touchY = event.getRawY();
+                    }
+                    return true;
+                case android.view.MotionEvent.ACTION_UP:
+                    if (!_touchMoved) {
+                        dialogs.confirm('提示', '确定停止服务？', function () {
+                            stopServer();
+                        });
+                    }
+                    return true;
+            }
+            return false;
         });
 
         // 设置悬浮窗位置（屏幕右上角）
         floatyWindow.setPosition(
-            Math.max(0, device.width - 200),
-            100
+            Math.max(0, device.width - 120),
+            80
         );
 
         log('悬浮按钮已创建');

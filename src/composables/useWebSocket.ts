@@ -85,22 +85,19 @@ export function useWebSocket() {
           const meta = pendingBinaryMeta
           pendingBinaryMeta = null
           if (pendingBinaryMetaTimer) { clearTimeout(pendingBinaryMetaTimer); pendingBinaryMetaTimer = null }
-          const bytes = new Uint8Array(event.data)
-          let binary = ''
-          for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i])
+          // 使用 FileReader 原生转换，避免逐字节 JS 循环
+          const reader = new FileReader()
+          reader.onload = () => {
+            const base64 = (reader.result as string).split(',')[1]
+            clearExecutionTimeout()
+            if (onResultCallback) {
+              onResultCallback({
+                type: 'result', status: 'success', dataType: 'base64',
+                data: base64, mime: meta.mime,
+              })
+            }
           }
-          const base64 = btoa(binary)
-          clearExecutionTimeout()
-          if (onResultCallback) {
-            onResultCallback({
-              type: 'result',
-              status: 'success',
-              dataType: 'base64',
-              data: base64,
-              mime: meta.mime,
-            })
-          }
+          reader.readAsDataURL(new Blob([event.data]))
         }
         return
       }
