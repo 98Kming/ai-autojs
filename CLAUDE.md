@@ -95,6 +95,10 @@
 服务端 → 前端: [WebSocket 二进制帧, opcode=0x2, payload=原始 byte[]]
 ```
 
+### 编码修复
+
+`decodeFrame` 中 `payloadString` 改用 `new java.lang.String(byte[], Charset.forName('UTF-8'))`，解决中文逐字节 `String.fromCharCode` 导致的乱码问题。
+
 ### 兼容性
 
 旧客户端收到的 `dataType:"binary"` 文本帧会被忽略，二进制帧因默认 binaryType=Blob 也不会触发正确解析——安全退化，无报错。
@@ -262,6 +266,19 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 弹面板调参：最大值、块大小(3-99)、C值(-50~50)、方法(高斯/均值)，`cv.adaptiveThreshold()`。文件名可编辑。
 
 ### 二值化 (inRange)
+
+颜色范围选取。点击「取色」后点击图片拾取颜色，分别设置下界/上界 16 进制色值，`cv.inRange()` 生成二值掩码。文件名可编辑。
+
+### 图片查找 (findImage)
+
+| 特性 | 说明 |
+|---|---|
+| 触发方式 | 点击工具栏「🔍 找图」按钮 |
+| 模板 | 当前选中图片，通过 `images.fromBase64()` 在手机端解码 |
+| 搜索区域 | 从剪切坐标自动扩展（x ±50px, y ±1/10 屏高），可手动编辑 |
+| 阈值 | 0~1 可调，默认 0.9 |
+| 执行 | WebSocket 发送代码 → 手机 `images.findImage()` → 返回坐标 |
+
 ### 切换图片行为
 
 - 缩放/平移 — 重置（适配新图片尺寸）

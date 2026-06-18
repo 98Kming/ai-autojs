@@ -96,6 +96,12 @@ function onTriggerScreenshot() {
   onRun()
 }
 
+// --- 图片查找（从 ImagePanel 触发） ---
+function onTriggerFindImage(code: string) {
+  codeStore.setContent(code)
+  onRun()
+}
+
 // --- 快捷键 ---
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === 'Enter') {
@@ -152,7 +158,7 @@ onUnmounted(() => {
             type="info"
           />
         </template>
-        <ImagePanel @trigger-screenshot="onTriggerScreenshot" />
+        <ImagePanel @trigger-screenshot="onTriggerScreenshot" @trigger-find-image="onTriggerFindImage" />
       </el-tab-pane>
     </el-tabs>
 

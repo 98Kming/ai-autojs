@@ -161,7 +161,11 @@ function decodeFrame(inputStream) {
         fin: fin,
         opcode: opcode,
         payload: payload,
-        payloadString: String.fromCharCode.apply(null, payload)
+        payloadString: function() {
+            var arr = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, payload.length);
+            for (var i = 0; i < payload.length; i++) arr[i] = new java.lang.Integer(payload[i]).byteValue();
+            return new java.lang.String(arr, java.nio.charset.Charset.forName('UTF-8'));
+        }()
     };
 }
 

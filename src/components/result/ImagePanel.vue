@@ -32,6 +32,7 @@ const selectedSrc = computed(() => {
 
 const emit = defineEmits<{
   triggerScreenshot: []
+  triggerFindImage: [code: string]
 }>()
 
 function onSelect(id: string) { selectedId.value = id }
@@ -44,7 +45,7 @@ function onClearAll() {
   ElMessageBox.confirm('确定清空所有截图？', '清空截图', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' })
     .then(() => { imageStore.clearAll(); selectedId.value = null }).catch(() => {})
 }
-function onScreenshot() { emit('triggerScreenshot') }
+function onScreenshot() { closeAllPanels(); emit('triggerScreenshot') }
 
 // === 放大镜 ===
 const magnifierEnabled = ref(true)
@@ -86,6 +87,7 @@ function closeAllPanels() {
   thresholdMode.value = false
   adaptiveMode.value = false
   inRangeMode.value = false
+  findMode.value = false
 }
 
 function toggleCropMode() {
@@ -308,6 +310,55 @@ function executeAdaptive() {
   img.src = selectedSrc.value
 }
 
+// === 图片查找 ===
+const findMode = ref(false)
+const findRegion = ref({ x: 0, y: 0, w: 0, h: 0 })
+const findThreshold = ref(0.9)
+const findResult = ref('')
+const isFinding = ref(false)
+
+function parseCropFileName(name: string) {
+  if (!name) return null
+  const m = name.match(/_(\d+)_(\d+)_(\d+)_(\d+)\.\w+$/)
+  if (!m) return null
+  const x1 = +m[1], y1 = +m[2], x2 = +m[3], y2 = +m[4]
+  return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }
+}
+
+function refreshFindRegion() {
+  findResult.value = ''
+  const parsed = parseCropFileName(selectedImage.value?.code || '')
+  if (parsed) {
+    const expX = 50, expY = Math.max(1, Math.round((imageNaturalSize.value.height || 1920) / 10))
+    findRegion.value = { x: Math.max(0, parsed.x - expX), y: Math.max(0, parsed.y - expY), w: parsed.w + expX * 2, h: parsed.h + expY * 2 }
+  } else {
+    findRegion.value = { x: 0, y: 0, w: 0, h: 0 }
+  }
+}
+
+function openFind() {
+  findMode.value = !findMode.value
+  if (!findMode.value) return
+  closeAllPanels()
+  findMode.value = true
+  refreshFindRegion()
+}
+
+async function executeFind() {
+  if (!selectedImage.value || isFinding.value) return
+  const { x, y, w, h } = findRegion.value
+  isFinding.value = true
+  try {
+    const { FIND_TEMPLATE } = await import('@/types/autojs')
+    const code = FIND_TEMPLATE(selectedImage.value.data,
+      w > 0 && h > 0 ? [x, y, w, h] : [],
+      findThreshold.value)
+    emit('triggerFindImage', code)
+  } finally {
+    isFinding.value = false
+  }
+}
+
 // 切换面板：互斥 + 确保 opencv 加载
 function openGray() {
   grayMode.value = !grayMode.value
@@ -338,10 +389,16 @@ function openAdaptive() {
   ensureCV()
 }
 
-// 切换图片时重置
+// 执行结果回填找图面板
+watch(() => codeStore.lastResult, (r) => {
+  if (r && findMode.value && r.dataType === 'text') findResult.value = r.data
+})
+
+// 图片选中变化：重置缩放/剪切，找图模式开启时更新区域
 watch(selectedId, () => {
   resetViewerTransform()
   resetCrop()
+  if (findMode.value) refreshFindRegion()
 })
 
 // 新图片加载完成后同步 resize 面板尺寸
@@ -606,6 +663,15 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
 
       <el-divider class="tool-divider" />
 
+      <el-tooltip content="图片查找" placement="right" :show-after="300">
+        <el-button circle :type="findMode ? 'primary' : 'default'" @click="openFind">
+          <span style="font-size:16px">🔍</span>
+        </el-button>
+      </el-tooltip>
+      <span class="tool-label" :class="{ active: findMode }">找图</span>
+
+      <el-divider class="tool-divider" />
+
       <el-tooltip content="文字识别（即将上线）" placement="right" :show-after="300">
         <el-button :icon="Reading" circle disabled />
       </el-tooltip>
@@ -639,6 +705,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
           <span v-if="thresholdMode" class="mode-badge">⚫ 阈值</span>
           <span v-if="adaptiveMode" class="mode-badge">🔲 自适应</span>
           <span v-if="inRangeMode" class="mode-badge">⬛ 二值化</span>
+          <span v-if="findMode" class="mode-badge">🔍 找图</span>
         </div>
 
         <img :src="selectedSrc" class="viewer-image" :style="imageTransformStyle" draggable="false" alt="screenshot" />
@@ -729,6 +796,29 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
           <div class="panel-row">
             <input v-model="inRangeFileName" class="ap-input file-input" />
             <el-button size="small" type="primary" :disabled="!cvReady || cvLoading || isProcessing" :loading="isProcessing" @click="executeInRange">{{ cvLoading ? '加载中...' : '⬛ 执行' }}</el-button>
+          </div>
+        </div>
+
+        <!-- 找图面板 -->
+        <div v-if="findMode" class="action-panel" @wheel.stop @dblclick.stop>
+          <div class="panel-title">🔍 图片查找</div>
+          <div class="panel-info" style="margin-bottom:2px">模板: {{ selectedImage?.code?.length < 60 ? selectedImage?.code : (selectedImage?.code?.slice(0, 40) + '...') }}</div>
+          <div class="crop-params-row">
+            <label>X <input v-model.number="findRegion.x" type="number" class="ap-input" min="0" /></label>
+            <label>Y <input v-model.number="findRegion.y" type="number" class="ap-input" min="0" /></label>
+            <label>W <input v-model.number="findRegion.w" type="number" class="ap-input" min="0" /></label>
+            <label>H <input v-model.number="findRegion.h" type="number" class="ap-input" min="0" /></label>
+          </div>
+          <div class="panel-row">
+            <span class="panel-label">阈值</span>
+            <input v-model.number="findThreshold" type="number" class="ap-input" min="0" max="1" step="0.01" style="width:70px" />
+          </div>
+          <div class="panel-row">
+            <span class="panel-label">结果</span>
+            <span class="hex-text">{{ findResult || '—' }}</span>
+          </div>
+          <div class="panel-row">
+            <el-button size="small" type="primary" :disabled="isFinding" :loading="isFinding" @click="executeFind">🔍 执行</el-button>
           </div>
         </div>
 

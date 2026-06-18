@@ -75,6 +75,27 @@ export interface HistoryEntry {
 
 // ===== 代码模板 =====
 
+/** 找图代码模板生成 */
+export function FIND_TEMPLATE(templateBase64: string, region: number[], threshold: number) {
+  return `(function () {
+    if (!requestScreenCapture()) return "请求截图失败";
+    var img = images.captureScreen();
+    var template = images.fromBase64("${templateBase64}");
+    if (!template) return "模板图片解码失败";
+    var options = {};
+    options.region = [${region.join(',')}];
+    options.threshold = ${threshold};
+    var res = images.findImage(img, template, options);
+    template.recycle();
+    img.recycle();
+    if (res) {
+      return "找到: (" + res.x + ", " + res.y + ")";
+    } else {
+      return "未找到匹配";
+    }
+  }())`
+}
+
 /** 截图代码模板 */
 export const SCREENSHOT_TEMPLATE = `(function () {
     if (!requestScreenCapture()) return "请求截图失败";
