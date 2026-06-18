@@ -340,8 +340,17 @@ function openAdaptive() {
 
 // 切换图片时重置
 watch(selectedId, () => {
-  resetViewerTransform(); resetCrop(); resetResize()
-  grayMode.value = false; inRangeMode.value = false; thresholdMode.value = false; adaptiveMode.value = false
+  resetViewerTransform()
+  resetCrop()
+})
+
+// 新图片加载完成后同步 resize 面板尺寸
+watch(imageNaturalSize, (size) => {
+  if (resizeMode.value && size.width > 0 && size.height > 0) {
+    resizeW.value = size.width
+    resizeH.value = size.height
+    resizeFileName.value = `_${size.width}_${size.height}.png`
+  }
 })
 
 // === 坐标工具函数 ===
