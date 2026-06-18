@@ -32,7 +32,7 @@
     │   ├── useHistoryStore.ts     # 执行历史（localStorage 持久化，上限200条）
     │   └── useImageStore.ts       # 截图列表（localStorage 持久化，4MB 容量保护，上限20张）
     ├── composables/               # Composition API hooks
-    │   ├── useWebSocket.ts        # WebSocket 生命周期（连接/发送/30s心跳/30s执行超时）
+    │   ├── useWebSocket.ts        # WebSocket 生命周期（连接/发送/30s心跳/120s执行超时）
     │   └── useAutoReconnect.ts    # 指数退避 + 随机抖动 自动重连
     ├── types/
     │   └── autojs.ts              # 消息协议类型 + 默认配置 + SCREENSHOT_TEMPLATE 常量
@@ -86,7 +86,7 @@
 - 二进制帧传输原始 byte[]，消除 Base64 33% 膨胀
 - 综合 JPEG + 二进制帧，端到端传输量约为原始 PNG Base64 的 **5-10%**
 - `ArrayBuffer` → `btoa()` 转 Base64 供下游消费，组件层无感知
-- `pendingBinaryMeta` 10s 超时清理，防止断连后状态残留
+- `pendingBinaryMeta` 超时与执行超时同步（120s），防止大图传输中途被清空
 
 ### 二进制帧流程
 

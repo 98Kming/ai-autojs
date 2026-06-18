@@ -120,7 +120,7 @@ export function useWebSocket() {
         if (msg.dataType === 'binary') {
           pendingBinaryMeta = { mime: msg.mime || 'image/png', size: msg.size || 0 }
           if (pendingBinaryMetaTimer) clearTimeout(pendingBinaryMetaTimer)
-          pendingBinaryMetaTimer = setTimeout(() => { pendingBinaryMeta = null; pendingBinaryMetaTimer = null }, 10000)
+          pendingBinaryMetaTimer = setTimeout(() => { pendingBinaryMeta = null; pendingBinaryMetaTimer = null }, EXECUTION_TIMEOUT_MS)
           return
         }
         if (onResultCallback) {
