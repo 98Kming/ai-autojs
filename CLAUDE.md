@@ -71,11 +71,38 @@
 ## WebSocket 协议（端口 9318）
 
 - 发送：`{"type":"command","data":"<js_code>"}`
-- 返回：`{"type":"result","data":"<output>","status":"success|error","dataType":"text|base64","mime":"..."}`
 - 心跳：`{"type":"ping"}` / `{"type":"pong"}`（文本帧，非 WebSocket opcode ping/pong）
-- 二进制结果：Base64 编码 + `dataType:"base64"` + `mime` 字段
-- Java `byte[]` 通过 `getClass().getName() === '[B'` 检测，`images.toBytes()` 输出自动识别为 `image/png`
-- 服务端支持返回值类型：字符串/数字/对象（text），Bitmap/byte[]/ByteArrayInputStream/File（base64）
+
+### 结果传输
+
+| 数据类型 | 协议 | 说明 |
+|---|---|---|
+| 文本 | 单文本帧 `{"type":"result","data":"...","dataType":"text"}` | 字符串/数字/对象输出 |
+| 二进制（旧） | 单文本帧 `dataType:"base64"` + Base64 编码 | 兼容模式 |
+| 二进制（新） | 元数据文本帧 `dataType:"binary"` + 紧跟二进制 WebSocket 帧（opcode=0x2） | 省去 Base64 编码，减少 ~25% 传输量 |
+
+传输优化：
+- 截图使用 JPEG 格式（`images.toBytes(img, 'jpg')`），文件大小减少 ~90%
+- 二进制帧传输原始 byte[]，消除 Base64 33% 膨胀
+- 综合 JPEG + 二进制帧，端到端传输量约为原始 PNG Base64 的 **5-10%**
+- `ArrayBuffer` → `btoa()` 转 Base64 供下游消费，组件层无感知
+- `pendingBinaryMeta` 10s 超时清理，防止断连后状态残留
+
+### 二进制帧流程
+
+```
+服务端 → 前端: {"type":"result","status":"success","dataType":"binary","mime":"image/jpeg","size":12345}
+服务端 → 前端: [WebSocket 二进制帧, opcode=0x2, payload=原始 byte[]]
+```
+
+### 兼容性
+
+旧客户端收到的 `dataType:"binary"` 文本帧会被忽略，二进制帧因默认 binaryType=Blob 也不会触发正确解析——安全退化，无报错。
+
+### 服务端检测
+
+- Java `byte[]` 通过 `getClass().getName() === '[B'` 检测，`images.toBytes()` 输出自动识别
+- 支持返回值类型：字符串/数字/对象（text），Bitmap/byte[]/ByteArrayInputStream/File（base64/binary）
 
 ## 开发命令
 

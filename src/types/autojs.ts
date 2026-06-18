@@ -14,8 +14,9 @@ export interface ResultMessage {
   type: 'result'
   data: string // 文本输出 或 Base64 编码的二进制
   status: 'success' | 'error'
-  dataType: 'text' | 'base64' // 结果数据类型
-  mime?: string // dataType 为 base64 时的 MIME 类型
+  dataType: 'text' | 'base64' | 'binary' // 结果数据类型：binary 为二进制帧元数据
+  mime?: string // dataType 为 base64/binary 时的 MIME 类型
+  size?: number // 二进制数据大小（字节）
 }
 
 /** 客户端 → 服务端：心跳请求 */
@@ -78,7 +79,7 @@ export interface HistoryEntry {
 export const SCREENSHOT_TEMPLATE = `(function () {
     if (!requestScreenCapture()) return "请求截图失败";
     let img = images.captureScreen();
-    let arr = images.toBytes(img);
+    let arr = images.toBytes(img, 'jpg');
     img.recycle();
     return arr;
 }())`

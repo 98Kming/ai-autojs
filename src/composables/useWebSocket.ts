@@ -3,7 +3,7 @@ import { useWebSocketStore } from '@/stores/useWebSocketStore'
 import { useAutoReconnect } from './useAutoReconnect'
 import type { ConnectionConfig, IncomingMessage, ResultMessage } from '@/types/autojs'
 
-const EXECUTION_TIMEOUT_MS = 30000
+const EXECUTION_TIMEOUT_MS = 120000
 const HEARTBEAT_TIMEOUT_MULTIPLIER = 2
 
 /**
@@ -20,6 +20,8 @@ export function useWebSocket() {
   let heartbeatTimeout: ReturnType<typeof setTimeout> | null = null
   let executionTimer: ReturnType<typeof setTimeout> | null = null
   let onResultCallback: ((msg: ResultMessage) => void) | null = null
+  let pendingBinaryMeta: { mime: string; size: number } | null = null
+  let pendingBinaryMetaTimer: ReturnType<typeof setTimeout> | null = null
 
   // --- 自动重连 ---
   const reconnect = useAutoReconnect({
@@ -61,6 +63,7 @@ export function useWebSocket() {
     let socket: WebSocket
     try {
       socket = new WebSocket(url)
+      socket.binaryType = 'arraybuffer'
     } catch (e) {
       console.error('[ws] 创建 WebSocket 失败:', e)
       wsStore.setLastError('创建连接失败: ' + (e as Error).message)
@@ -76,6 +79,33 @@ export function useWebSocket() {
     }
 
     socket.onmessage = (event: MessageEvent) => {
+      // 二进制帧：二进制结果数据
+      if (event.data instanceof ArrayBuffer) {
+        if (pendingBinaryMeta) {
+          const meta = pendingBinaryMeta
+          pendingBinaryMeta = null
+          if (pendingBinaryMetaTimer) { clearTimeout(pendingBinaryMetaTimer); pendingBinaryMetaTimer = null }
+          const bytes = new Uint8Array(event.data)
+          let binary = ''
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i])
+          }
+          const base64 = btoa(binary)
+          clearExecutionTimeout()
+          if (onResultCallback) {
+            onResultCallback({
+              type: 'result',
+              status: 'success',
+              dataType: 'base64',
+              data: base64,
+              mime: meta.mime,
+            })
+          }
+        }
+        return
+      }
+
+      // 文本帧
       let msg: IncomingMessage
       try {
         msg = JSON.parse(event.data as string) as IncomingMessage
@@ -86,6 +116,13 @@ export function useWebSocket() {
 
       if (msg.type === 'result') {
         clearExecutionTimeout()
+        // 二进制元数据帧：等待后续二进制数据
+        if (msg.dataType === 'binary') {
+          pendingBinaryMeta = { mime: msg.mime || 'image/png', size: msg.size || 0 }
+          if (pendingBinaryMetaTimer) clearTimeout(pendingBinaryMetaTimer)
+          pendingBinaryMetaTimer = setTimeout(() => { pendingBinaryMeta = null; pendingBinaryMetaTimer = null }, 10000)
+          return
+        }
         if (onResultCallback) {
           onResultCallback(msg as ResultMessage)
         }
@@ -220,6 +257,8 @@ export function useWebSocket() {
 
   // --- 生命周期 ---
   onUnmounted(() => {
+    if (pendingBinaryMetaTimer) clearTimeout(pendingBinaryMetaTimer)
+    pendingBinaryMeta = null
     disconnect()
   })
 

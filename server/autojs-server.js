@@ -24,6 +24,7 @@ var floatyWindow = null;
 // ===== WebSocket 常量 =====
 var WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 var OPCODE_TEXT = 0x1;
+var OPCODE_BINARY = 0x2;
 var OPCODE_CLOSE = 0x8;
 var OPCODE_PING = 0x9;
 var OPCODE_PONG = 0xA;
@@ -210,6 +211,13 @@ function sendTextFrame(outputStream, text) {
     outputStream.flush();
 }
 
+// ===== 发送二进制帧 =====
+function sendBinaryFrame(outputStream, javaBytes) {
+    var frame = encodeFrame(OPCODE_BINARY, javaBytes);
+    outputStream.write(frame);
+    outputStream.flush();
+}
+
 // ===== 发送 Pong 帧 =====
 function sendPong(outputStream, pingPayload) {
     var frame = encodeFrame(OPCODE_PONG, pingPayload);
@@ -297,7 +305,7 @@ function detectMime(value) {
     return 'application/octet-stream';
 }
 
-// ===== 代码执行 =====
+// ===== 代码执行（二进制结果返回对象，元数据与数据分离） =====
 function executeCode(code) {
     var logs = [];
     var originalLog = console.log;
@@ -314,18 +322,21 @@ function executeCode(code) {
         var result = eval(code);
         console.log = originalLog;
 
-        // 检查二进制结果
+        // 二进制结果：返回元数据 + 原始 byte[]
         if (isBinaryResult(result)) {
             var bytes = toByteArray(result);
             var mime = detectMime(result);
-            var b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
-            return JSON.stringify({
-                type: 'result',
-                status: 'success',
-                dataType: 'base64',
-                data: b64,
-                mime: mime
-            });
+            return {
+                isBinary: true,
+                metaJson: JSON.stringify({
+                    type: 'result',
+                    status: 'success',
+                    dataType: 'binary',
+                    mime: mime,
+                    size: bytes.length
+                }),
+                bytes: bytes
+            };
         }
 
         // 文本结果
@@ -335,21 +346,27 @@ function executeCode(code) {
         } else {
             output = result !== undefined ? String(result) : '';
         }
-        return JSON.stringify({
-            type: 'result',
-            status: 'success',
-            dataType: 'text',
-            data: output
-        });
+        return {
+            isBinary: false,
+            textJson: JSON.stringify({
+                type: 'result',
+                status: 'success',
+                dataType: 'text',
+                data: output
+            })
+        };
 
     } catch (e) {
         console.log = originalLog;
-        return JSON.stringify({
-            type: 'result',
-            status: 'error',
-            dataType: 'text',
-            data: e.message + '\n' + (e.stack || '')
-        });
+        return {
+            isBinary: false,
+            textJson: JSON.stringify({
+                type: 'result',
+                status: 'error',
+                dataType: 'text',
+                data: e.message + '\n' + (e.stack || '')
+            })
+        };
     }
 }
 
@@ -390,8 +407,13 @@ function handleClient(socket) {
 
                 if (msg.type === 'command') {
                     log('执行代码 (来自 ' + clientId + ')...');
-                    var resultJson = executeCode(msg.data);
-                    sendTextFrame(outputStream, resultJson);
+                    var execResult = executeCode(msg.data);
+                    if (execResult.isBinary) {
+                        sendTextFrame(outputStream, execResult.metaJson);
+                        sendBinaryFrame(outputStream, execResult.bytes);
+                    } else {
+                        sendTextFrame(outputStream, execResult.textJson);
+                    }
                 } else if (msg.type === 'ping') {
                     // 心跳：回复 pong
                     sendTextFrame(outputStream, JSON.stringify({ type: 'pong' }));
