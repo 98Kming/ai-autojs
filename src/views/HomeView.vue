@@ -42,7 +42,7 @@ ws.onResult((msg: ResultMessage) => {
 
   // 图片结果 → 图片列表
   if (msg.dataType === 'base64' && msg.mime?.startsWith('image/') && msg.status === 'success') {
-    imageStore.addImage(msg.data, msg.mime, codeStore.content)
+    await imageStore.addImage(msg.data, msg.mime, codeStore.content)
     ElMessage.success('截图已保存')
     return
   }

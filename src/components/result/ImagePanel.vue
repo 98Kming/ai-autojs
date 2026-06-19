@@ -315,7 +315,6 @@ const findMode = ref(false)
 const findRegion = ref({ x: 0, y: 0, w: 0, h: 0 })
 const findThreshold = ref(0.9)
 const findResult = ref('')
-const isFinding = ref(false)
 
 function parseCropFileName(name: string) {
   if (!name) return null
@@ -345,18 +344,13 @@ function openFind() {
 }
 
 async function executeFind() {
-  if (!selectedImage.value || isFinding.value) return
+  if (!selectedImage.value || codeStore.isExecuting) return
   const { x, y, w, h } = findRegion.value
-  isFinding.value = true
-  try {
-    const { FIND_TEMPLATE } = await import('@/types/autojs')
-    const code = FIND_TEMPLATE(selectedImage.value.data,
-      w > 0 && h > 0 ? [x, y, w, h] : [],
-      findThreshold.value)
-    emit('triggerFindImage', code)
-  } finally {
-    isFinding.value = false
-  }
+  const { FIND_TEMPLATE } = await import('@/types/autojs')
+  const code = FIND_TEMPLATE(selectedImage.value.data,
+    w > 0 && h > 0 ? [x, y, w, h] : [],
+    findThreshold.value)
+  emit('triggerFindImage', code)
 }
 
 // 切换面板：互斥 + 确保 opencv 加载
@@ -818,7 +812,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
             <span class="hex-text">{{ findResult || '—' }}</span>
           </div>
           <div class="panel-row">
-            <el-button size="small" type="primary" :disabled="isFinding" :loading="isFinding" @click="executeFind">🔍 执行</el-button>
+            <el-button size="small" type="primary" :disabled="codeStore.isExecuting" :loading="codeStore.isExecuting" @click="executeFind">🔍 执行</el-button>
           </div>
         </div>
 

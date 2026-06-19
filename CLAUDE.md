@@ -30,7 +30,7 @@
     │   ├── useWebSocketStore.ts   # 连接状态 + 配置 + 历史抽屉开关
     │   ├── useCodeStore.ts        # 编辑器内容 + 执行状态
     │   ├── useHistoryStore.ts     # 执行历史（localStorage 持久化，上限200条）
-    │   └── useImageStore.ts       # 截图列表（localStorage 持久化，4MB 容量保护，上限20张）
+    │   └── useImageStore.ts       # 截图列表（localStorage 显式持久化，上限20张，超4MB弹确认裁剪）
     ├── composables/               # Composition API hooks
     │   ├── useWebSocket.ts        # WebSocket 生命周期（连接/发送/30s心跳/120s执行超时）
     │   └── useAutoReconnect.ts    # 指数退避 + 随机抖动 自动重连
@@ -285,9 +285,6 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 - 剪切选区 — 重置（选区与图片绑定）
 - 调整大小面板 — 保持打开，尺寸自动同步到新图片
 - 灰度/阈值/自适应/inRange 面板 — 保持打开，参数不变
-
-
-颜色范围选取。点击「取色」后点击图片拾取颜色，分别设置下界/上界，`cv.inRange()` 生成二值掩码。16 进制颜色值可手动编辑。文件名可编辑。
 
 ## 编码约定
 
