@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(npm install *)",
-      "Bash(npx vue-tsc *)"
+      "Bash(npx vue-tsc *)",
+      "Bash(uv run python -c ' *)",
+      "Bash(gh pr *)",
+      "Bash(cd \"f:\\\\ideaProject\\\\vue\\\\ai-autojs\" && git diff HEAD -- \"py/\" \"src/\" 2>/dev/null; git diff --no-index /dev/null \"py/widgets/image_viewer.py\" 2>/dev/null | head -5)",
+      "Read(//dev/**)"
     ]
   }
 }

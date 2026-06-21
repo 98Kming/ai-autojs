@@ -295,3 +295,7 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 - 子组件通过 Pinia store 获取状态，不通过 props 跨层传递
 - CSS 变量统一定义在 `styles/variables.css`
 - 公共代码模板常量定义在 `types/autojs.ts`
+
+## Python 版
+
+Python 桌面 GUI 移植计划详见 [py/GUIDE.md](py/GUIDE.md)。

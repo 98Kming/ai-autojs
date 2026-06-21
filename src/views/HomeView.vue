@@ -27,7 +27,7 @@ const activeTab = ref('code')
 // --- WebSocket ---
 const ws = useWebSocket()
 
-ws.onResult((msg: ResultMessage) => {
+ws.onResult(async (msg: ResultMessage) => {
   codeStore.setExecuting(false)
   const durationMs = _execStartTime > 0 ? Date.now() - _execStartTime : undefined
   codeStore.setResult(msg, durationMs)

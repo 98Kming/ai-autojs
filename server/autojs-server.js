@@ -42,7 +42,7 @@ function generateUUID() {
 function log(msg) {
     var ts = new java.text.SimpleDateFormat('HH:mm:ss').format(new java.util.Date());
     console.log('[' + ts + '] ' + msg);
-    toast(msg);
+    // toast(msg);
 }
 
 // ===== WebSocket 握手处理（逐字节读取，避免 BufferedReader 缓冲破坏帧数据） =====
