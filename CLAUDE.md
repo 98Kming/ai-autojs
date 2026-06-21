@@ -1,6 +1,6 @@
 # AI-AutoJS 助手
 
-基于 Vue 3 + TypeScript + Element Plus 的 AutoJS6 WebSocket 远程代码执行工具，支持截图管理和图片处理。
+基于 Vue 3 + TypeScript + Element Plus 的 AutoJS6 WebSocket 远程代码执行工具，支持截图管理和图片处理。同时提供 Python / PySide6 桌面版（`py/`），取消浏览器限制。
 
 ## 技术栈
 
@@ -298,4 +298,132 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 
 ## Python 版
 
-Python 桌面 GUI 移植计划详见 [py/GUIDE.md](py/GUIDE.md)。
+Python 桌面 GUI 移植版，功能等齐 Vue 版，取消浏览器限制。
+
+### 技术栈
+
+| 层 | 技术 |
+|---|---|
+| GUI 框架 | PySide6 >= 6.5（Qt for Python，LGPL） |
+| WebSocket | QWebSocket（PySide6 内置，事件循环集成） |
+| 图像处理 | opencv-python-headless >= 4.8 + Pillow 回退 |
+| 状态管理 | QObject + Signal（对应 Pinia store） |
+| 持久化 | JSON 文件（QStandardPaths::AppDataLocation） |
+| 包管理 | uv |
+
+### 项目结构
+
+```
+py/
+├── main.py                          # QApplication 入口
+├── pyproject.toml                   # uv 项目配置
+│
+├── app/
+│   ├── main_window.py               # 主窗口：信号接线、标签页、快捷键
+│   │
+│   ├── protocol/
+│   │   ├── messages.py              # @dataclass 消息类型、协议常量
+│   │   └── templates.py            # JS 代码模板（截图、找图）
+│   │
+│   ├── models/                      # 状态管理（QObject + Signal）
+│   │   ├── connection.py            # 连接配置 + 状态
+│   │   ├── code_editor.py           # 编辑器内容 + 执行状态
+│   │   ├── history.py              # 执行历史（JSON 持久化，上限 500）
+│   │   └── images.py               # 图片列表（文件系统持久化，无上限）
+│   │
+│   ├── network/
+│   │   ├── ws_client.py             # QWebSocket 生命周期、二进制帧、心跳、超时
+│   │   └── reconnect.py            # 指数退避 + 随机抖动重连
+│   │
+│   ├── persistence/
+│   │   └── config_store.py          # JSON 文件读写 (config/history/images)
+│   │
+│   ├── image_processing/
+│   │   ├── cv_manager.py            # OpenCV 可用性检测、惰性导入
+│   │   └── operations.py           # 灰度/阈值/自适应/inRange/缩放 纯函数
+│   │
+│   └── widgets/
+│       ├── styles.py                # 全局 QSS 样式
+│       ├── header_bar.py            # 顶栏 + 状态灯
+│       ├── status_dot.py            # 自绘脉冲动画指示灯
+│       ├── connection_bar.py        # 主机/端口 + 连接/断开
+│       ├── code_editor.py           # QPlainTextEdit + 行号标尺
+│       ├── editor_toolbar.py        # 格式化/清空/运行
+│       ├── result_panel.py          # 结果列表容器
+│       ├── result_item.py           # 文本/hex/图片 三种展示
+│       ├── history_drawer.py        # 右侧滑出历史面板
+│       ├── history_item.py          # 单条历史卡片
+│       ├── image_toolbar.py         # 左侧竖排工具按钮
+│       ├── image_list_panel.py      # 缩略图列表
+│       ├── image_thumbnail.py       # 72x72 缩略图卡片
+│       ├── image_viewer.py          # QGraphicsView 缩放/平移/叠加
+│       ├── magnifier_lens.py        # 10x 放大镜（像素网格+十字线+取色）
+│       ├── crop_overlay.py          # 裁剪框选覆盖层
+│       └── action_panels/           # 图像处理操作面板
+│           ├── base_panel.py        # 浮动面板基类
+│           ├── crop_panel.py        # 裁剪参数
+│           ├── resize_panel.py      # 缩放参数
+│           ├── grayscale_panel.py   # 灰度化
+│           ├── threshold_panel.py   # 固定阈值
+│           ├── adaptive_panel.py    # 自适应阈值
+│           ├── inrange_panel.py     # 颜色范围+取色器
+│           └── find_image_panel.py  # 模板匹配
+```
+
+### Model → Widget 信号流
+
+```
+ConnectionModel.status_changed → StatusDot.set_status, ConnectionBar.set_connected
+CodeEditorModel.executing_changed → EditorToolbar.set_executing
+CodeEditorModel.result_received → ResultPanel.add_result
+HistoryModel.entries_changed → HistoryDrawer.refresh
+ImageModel.images_changed → ImageListPanel.refresh + tab label
+ImageModel.image_added → ImageViewer.load_image
+```
+
+### 图片持久化机制
+
+```
+<AppDataLocation>/ai-autojs/
+├── config.json          # 连接配置
+├── history.json         # 执行历史
+├── images.json          # 图片元数据索引 [{id, mime, timestamp, code, file}]
+└── images/              # 实际图片文件
+    ├── <id>.png
+    └── <id>.jpg
+```
+
+- 图片存为实际 PNG/JPEG 文件，不在 JSON 中塞 Base64
+- `ImageModel.load_image_data(id)` 懒加载 Base64 到内存
+- 无数量/大小上限，仅受磁盘空间限制
+
+### 与 Vue 版的关键差异
+
+| 特性 | Vue 版 | Python 版 |
+|---|---|---|
+| 图片数量上限 | 20 | **无限制** |
+| 存储容量上限 | 4MB (localStorage) | **无限制** |
+| 图片持久化 | localStorage + 容量告警 | 文件系统（JSON 索引 + 实际文件） |
+| 历史记录上限 | 200 | 500 |
+| 超容量对话框 | 有 | **移除** |
+| 图像处理引擎 | OpenCV.js CDN 动态加载 | pip 本地 opencv-python-headless |
+| 缩放平移 | CSS transform | QGraphicsView 原生 |
+| Base64 转换 | FileReader 异步 | QByteArray.toBase64 同步 |
+
+### 开发命令
+
+```bash
+cd py
+uv run python main.py              # 直接运行
+uv tool install . && ai-autojs     # 安装为命令行工具
+```
+
+### 编码约定
+
+- 中文注释，英文标识符
+- Model 层：QObject 子类，通过 Signal 通知 UI（对应 Pinia store）
+- Widget 层：纯 UI，通过 Signal/Slot 与 Model 解耦
+- `from __future__ import annotations` 在所有文件顶部（兼容 Python 3.8 `X | None` 语法）
+- QSS 样式集中在 `widgets/styles.py`
+- WebSocket 逻辑集中在 `network/ws_client.py`
+- 图像处理纯函数在 `image_processing/operations.py`，优先 OpenCV，不可用时 Pillow 回退
