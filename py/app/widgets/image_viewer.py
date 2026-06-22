@@ -13,8 +13,8 @@ from __future__ import annotations
 import base64
 from PySide6.QtCore import Qt, Signal, QPointF, QRectF
 from PySide6.QtGui import (
-    QPixmap, QImage, QPainter, QPen, QColor, QWheelEvent, QMouseEvent,
-    QBrush,
+    QPixmap, QPainter, QPen, QColor, QWheelEvent, QMouseEvent,
+    QKeyEvent, QBrush, QCursor,
 )
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 
@@ -58,6 +58,10 @@ class ImageViewer(QGraphicsView):
         # 取色模式
         self._pick_mode = False
 
+        # 方向键虚拟光标（亚像素累积）
+        self._virtual_cursor: QPointF | None = None
+        self._sync_virtual_from_mouse = True  # setPos 后短暂关闭，防止覆写
+
         # 样式
         self.setStyleSheet(f"background: #1a1a2e; border: none;")
         self.setRenderHints(
@@ -69,6 +73,9 @@ class ImageViewer(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # 键盘聚焦（方向键漫游）
+        self.setFocusPolicy(Qt.StrongFocus)
 
         # 跟踪鼠标
         self.setMouseTracking(True)
@@ -96,6 +103,9 @@ class ImageViewer(QGraphicsView):
         self._zoom_level = self.transform().m11()  # 水平缩放因子
         self.zoom_changed.emit(self._zoom_level)
 
+        # 自动聚焦，无需先点击图片即可响应方向键
+        self.setFocus()
+
     def get_image_at_cursor(self) -> QPointF | None:
         """获取鼠标处的图片坐标"""
         if self._pixmap_item is None:
@@ -119,6 +129,11 @@ class ImageViewer(QGraphicsView):
 
     def is_pick_mode(self) -> bool:
         return self._pick_mode
+
+    def enterEvent(self, event):
+        """鼠标进入图片区域自动聚焦，无需点击即可响应方向键"""
+        self.setFocus()
+        super().enterEvent(event)
 
     def reset_zoom(self):
         """重置缩放以适配视图"""
@@ -194,9 +209,13 @@ class ImageViewer(QGraphicsView):
             # 更新裁剪矩形
             self._update_crop(event.position())
 
-        # 发射鼠标在图片坐标系中的位置
+        # 发射鼠标在图片像素坐标系中的位置
         scene_pos = self.mapToScene(event.pos())
-        self.mouse_moved_image.emit(scene_pos)
+        image_pos = self._image_coord(scene_pos)
+        if self._sync_virtual_from_mouse:
+            self._virtual_cursor = image_pos
+            self.mouse_moved_image.emit(image_pos)
+        self._sync_virtual_from_mouse = True
 
         super().mouseMoveEvent(event)
 
@@ -211,9 +230,63 @@ class ImageViewer(QGraphicsView):
 
         super().mouseReleaseEvent(event)
 
+    def _image_coord(self, scene_pos: QPointF) -> QPointF:
+        """scene 坐标 → 图片像素坐标（pixmap_item 移位后两者有偏移）"""
+        if self._pixmap_item:
+            p = self._pixmap_item.pos()
+            return QPointF(scene_pos.x() - p.x(), scene_pos.y() - p.y())
+        return scene_pos
+
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """双击重置缩放"""
         self.reset_zoom()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        """方向键移动鼠标 1 图片像素（亚像素累积，任意缩放比精确）"""
+        if self._pixmap_item is None:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        dx, dy = 0.0, 0.0
+        if key == Qt.Key_Left:
+            dx = -1.0
+        elif key == Qt.Key_Right:
+            dx = 1.0
+        elif key == Qt.Key_Up:
+            dy = -1.0
+        elif key == Qt.Key_Down:
+            dy = 1.0
+        else:
+            super().keyPressEvent(event)
+            return
+
+        # 初始化虚拟光标（首次或缩放重置后）
+        if self._virtual_cursor is None:
+            pos = self.get_image_at_cursor()
+            if pos is None:
+                return
+            self._virtual_cursor = pos
+
+        # 移动 1 图片像素
+        self._virtual_cursor += QPointF(dx, dy)
+        
+        # 夹紧至图片边界
+        r = self._current_pixmap.rect()
+        self._virtual_cursor.setX(max(0.0, min(self._virtual_cursor.x(), r.width() - 1)))
+        self._virtual_cursor.setY(max(0.0, min(self._virtual_cursor.y(), r.height() - 1)))
+
+        # 先发送精确位置给放大镜
+        self.mouse_moved_image.emit(self._virtual_cursor)
+
+        # 移动 OS 光标；关闭鼠标事件对虚拟光标的覆写（setPos 会触发 mouseMoveEvent）
+        self._sync_virtual_from_mouse = False
+        scene_pos = self._virtual_cursor + self._pixmap_item.pos()
+        view_pos = self.mapFromScene(scene_pos)
+        global_pos = self.mapToGlobal(view_pos)
+        QCursor.setPos(global_pos)
+
+        event.accept()
 
     # ============ 裁剪 ============
 
