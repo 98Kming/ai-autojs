@@ -389,6 +389,18 @@ ImageModel.images_changed → ImageListPanel.refresh + tab label
 ImageModel.image_added → ImageViewer.load_image
 ```
 
+### 历史抽屉
+
+右侧滑出面板（380px），撑满顶栏下方窗口全高。QPropertyAnimation 滑动动画（250ms，OutCubic）。
+
+| 特性 | 说明 |
+|---|---|
+| 触发方式 | 顶栏「📋 历史」按钮 |
+| 卡片 | 状态徽章 + 时间戳 + 耗时，代码预览（80 字符，自动换行），结果预览（60 字符，自动换行） |
+| 操作 | 重新运行 / 复制代码 / 删除单条 / 清空全部 |
+| 持久化 | `history.json`，上限 500 条 |
+| 刷新 | `entries_changed` 信号驱动全量重建（当前无增量更新） |
+
 ### 图片持久化机制
 
 ```

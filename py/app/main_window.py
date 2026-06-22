@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
 
         # ---- 历史抽屉 ----
         self._history_drawer = HistoryDrawer(self)
+        self._history_drawer.set_top_offset(self._header_bar.height())
         self._history_drawer.hide()
 
         self._tab_widget.currentChanged.connect(self._on_tab_changed)

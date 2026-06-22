@@ -104,7 +104,7 @@ class HistoryItem(QFrame):
                 border: none;
             }}
         """)
-        code_label.setWordWrap(False)
+        code_label.setWordWrap(True)
         layout.addWidget(code_label)
 
         # ====== 结果预览 ======
@@ -115,6 +115,7 @@ class HistoryItem(QFrame):
             if len(self._entry.result) > 60:
                 result_text += "..."
         result_label = QLabel(result_text)
+        result_label.setWordWrap(True)
         result_label.setStyleSheet(f"color: {COLORS['text_placeholder']}; font-size: 12px; border: none;")
         layout.addWidget(result_label)
 

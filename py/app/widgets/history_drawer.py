@@ -27,6 +27,7 @@ class HistoryDrawer(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._items: list[HistoryItem] = []
+        self._top_offset = 0
 
         # 自身样式
         self.setFixedWidth(self.WIDTH)
@@ -103,6 +104,17 @@ class HistoryDrawer(QWidget):
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
         self._anim.finished.connect(self._on_anim_finished)
 
+    def showEvent(self, event):
+        """显示时撑满父窗口高度（顶栏下方）"""
+        if self.parent():
+            self.setGeometry(
+                self.parent().width() - self.WIDTH + self._slide_offset,
+                self._top_offset,
+                self.WIDTH,
+                self.parent().height() - self._top_offset,
+            )
+        super().showEvent(event)
+
     # ============ slide_offset 属性（动画用） ============
 
     def get_slide_offset(self) -> int:
@@ -111,7 +123,12 @@ class HistoryDrawer(QWidget):
     def set_slide_offset(self, val: int):
         self._slide_offset = val
         if self.parent():
-            self.move(self.parent().width() - self.WIDTH + val, self.y())
+            self.setGeometry(
+                self.parent().width() - self.WIDTH + val,
+                self._top_offset,
+                self.WIDTH,
+                self.parent().height() - self._top_offset,
+            )
 
     slide_offset = Property(int, get_slide_offset, set_slide_offset)
 
@@ -124,6 +141,8 @@ class HistoryDrawer(QWidget):
         self._visible = visible
 
         if visible:
+            # 预置到屏幕外，避免 showEvent 先显示再跳回起点的闪烁
+            self._slide_offset = self.WIDTH
             self.show()
             self.raise_()
             self._anim.setStartValue(self.WIDTH)
@@ -132,6 +151,10 @@ class HistoryDrawer(QWidget):
             self._anim.setStartValue(0)
             self._anim.setEndValue(self.WIDTH)
         self._anim.start()
+
+    def set_top_offset(self, offset: int):
+        """设置顶部偏移（避开顶栏）"""
+        self._top_offset = offset
 
     def is_visible(self) -> bool:
         return self._visible
