@@ -29,6 +29,7 @@ class ImageViewer(QGraphicsView):
     mouse_moved_image = Signal(QPointF)  # 鼠标在图片坐标系中的位置
     zoom_changed = Signal(float)  # 当前缩放比例
     region_selected = Signal(int, int, int, int)  # (x, y, w, h) 裁剪区域
+    pixel_picked = Signal(int, int)  # 取色模式下点击图片 (x, y)
 
     MIN_ZOOM = 0.2
     MAX_ZOOM = 10.0
@@ -53,6 +54,9 @@ class ImageViewer(QGraphicsView):
         # 平移状态
         self._panning = False
         self._pan_start = QPointF()
+
+        # 取色模式
+        self._pick_mode = False
 
         # 样式
         self.setStyleSheet(f"background: #1a1a2e; border: none;")
@@ -105,6 +109,17 @@ class ImageViewer(QGraphicsView):
     def get_current_image(self) -> ImageEntry | None:
         return self._current_image
 
+    def set_pick_mode(self, enabled: bool):
+        """设置取色模式开关"""
+        self._pick_mode = enabled
+        if enabled:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
+    def is_pick_mode(self) -> bool:
+        return self._pick_mode
+
     def reset_zoom(self):
         """重置缩放以适配视图"""
         if self._pixmap_item:
@@ -141,6 +156,14 @@ class ImageViewer(QGraphicsView):
     def mousePressEvent(self, event: QMouseEvent):
         """鼠标按下"""
         if event.button() == Qt.LeftButton:
+            # 取色模式优先：点击取色，可多次点击覆盖前一次结果
+            if self._pick_mode:
+                scene_pos = self.mapToScene(event.pos())
+                x, y = int(scene_pos.x()), int(scene_pos.y())
+                self.pixel_picked.emit(x, y)
+                event.accept()
+                return
+
             if self._is_ctrl_pressed():
                 # Ctrl+拖拽：开始裁剪框选
                 self._start_crop(event.position())
@@ -183,7 +206,8 @@ class ImageViewer(QGraphicsView):
             if self._is_ctrl_pressed() and self._crop_rect_item:
                 self._finish_crop()
             self._panning = False
-            self.setCursor(Qt.ArrowCursor)
+            if not self._pick_mode:
+                self.setCursor(Qt.ArrowCursor)
 
         super().mouseReleaseEvent(event)
 

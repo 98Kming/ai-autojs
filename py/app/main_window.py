@@ -310,6 +310,7 @@ class MainWindow(QMainWindow):
         self._image_viewer.zoom_changed.connect(self._on_zoom_changed)
         self._image_viewer.mouse_moved_image.connect(self._on_viewer_mouse_moved)
         self._image_viewer.region_selected.connect(self._on_crop_region_selected)
+        self._image_viewer.pixel_picked.connect(self._on_pixel_picked)
         self._image_model.images_changed.connect(self._on_images_changed)
         self._image_model.image_added.connect(self._on_image_added)
 
@@ -647,9 +648,28 @@ class MainWindow(QMainWindow):
         from app.image_processing.operations import adaptive_threshold
         self._process_image("自适应阈值", adaptive_threshold, maxval, method, block_size, C)
 
-    def _on_inrange_execute(self, lb: int, lg: int, lr: int, ub: int, ug: int, ur: int, filename: str):
+    def _on_inrange_execute(self, lower_hex: str, upper_hex: str, filename: str):
         from app.image_processing.operations import in_range
-        self._process_image("inRange", in_range, (lb, lg, lr), (ub, ug, ur))
+
+        def _parse_hex(h: str):
+            h = h.strip().lstrip("#")
+            if len(h) != 6:
+                return None
+            try:
+                r = int(h[0:2], 16)
+                g = int(h[2:4], 16)
+                b = int(h[4:6], 16)
+            except ValueError:
+                return None
+            return (b, g, r)  # BGR for OpenCV
+
+        lower = _parse_hex(lower_hex)
+        upper = _parse_hex(upper_hex)
+        if lower is None or upper is None:
+            self._status_label.setText(f"颜色格式无效，请使用 #RRGGBB：\"{lower_hex}\" \"{upper_hex}\"")
+            return
+
+        self._process_image("inRange", in_range, lower, upper)
 
     def _on_find_execute(self, x: int, y: int, w: int, h: int, threshold: float):
         """找图：通过 WebSocket 执行"""
@@ -667,14 +687,25 @@ class MainWindow(QMainWindow):
         self._on_trigger_find_image(template_data, x, y, w, h, threshold)
 
     def _on_color_pick(self, target: str):
-        """取色模式：从放大镜当前像素取色"""
+        """取色模式两段式：进入/取消取色（与 Vue 版一致）"""
+        panel = self._action_panels.get("inrange")
+        if not panel:
+            return
+        if target:
+            # 进入取色模式
+            self._image_viewer.set_pick_mode(True)
+        else:
+            # 取消取色
+            self._image_viewer.set_pick_mode(False)
+
+    def _on_pixel_picked(self, x: int, y: int):
+        """图片点击取色，可多次点击覆盖前次结果"""
         color = self._magnifier_lens.pixel_color
         b = color.blue()
         g = color.green()
         r = color.red()
         panel = self._action_panels.get("inrange")
         if panel:
-            panel.set_pick_target(target)
             panel.set_picked_color(b, g, r)
 
     # ============ 窗口状态 ============

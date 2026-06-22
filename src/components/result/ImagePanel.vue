@@ -207,8 +207,7 @@ function pickColor() {
   const b = parseInt(hex.slice(5, 7), 16)
   if (isPicking.value === 'lower') inRangeLower.value = { r, g, b }
   else if (isPicking.value === 'upper') inRangeUpper.value = { r, g, b }
-  isPicking.value = null
-  ElMessage.success(`取色完成 #${hex.slice(1)}`)
+  // 取色模式保持活跃，可多次点击覆盖前次结果，按钮切换退出
 }
 
 function executeInRange() {

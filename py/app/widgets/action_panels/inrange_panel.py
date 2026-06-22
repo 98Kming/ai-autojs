@@ -1,4 +1,4 @@
-"""颜色范围二值化 (inRange) 面板"""
+"""颜色范围二值化 (inRange) 面板 — 使用 #RRGGBB hex 输入，与 Vue 版一致"""
 
 from __future__ import annotations
 
@@ -18,117 +18,114 @@ class ColorSwatch(QFrame):
         super().__init__(parent)
         self.setFixedSize(24, 24)
         self._color = color
-        self.setStyleSheet(f"border: 1px solid #555; border-radius: 3px;")
+        self._update_style()
 
     def set_color(self, color: QColor):
         self._color = color
+        self._update_style()
+
+    def _update_style(self):
         self.setStyleSheet(
-            f"background: {color.name()}; border: 1px solid #555; border-radius: 3px;"
+            f"background: {self._color.name()}; border: 1px solid #555; border-radius: 3px;"
         )
 
 
 class InRangePanel(BasePanel):
-    """颜色范围二值化面板"""
+    """颜色范围二值化面板 — hex 输入 + 取色两段式，与 Vue 版一致"""
 
-    inrange_execute = Signal(int, int, int, int, int, int, str)  # lb,lg,lr, ub,ug,ur, filename
-    color_pick_requested = Signal(str)  # "lower" or "upper"
+    inrange_execute = Signal(str, str, str)  # lower_hex, upper_hex, filename
+    color_pick_requested = Signal(str)  # "lower" / "upper" 进入取色，"" 取消取色
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("🎨 二值化 (inRange)", parent)
+        super().__init__("⬛ 二值化 (inRange)", parent)
 
-        # 下界
-        lower_label = QLabel("下界 (BGR):")
-        lower_label.setStyleSheet("color: #fea; font-weight: bold; border: none;")
-        self.add_widget(lower_label)
+        self.add_widget(QLabel("点击取色按钮后点击图片选取颜色"))
 
+        # 下界（默认红色，与 Vue 版一致）
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel("B:"))
-        self._lower_b = QLineEdit("0")
-        self._lower_b.setFixedWidth(50)
-        row1.addWidget(self._lower_b)
-        row1.addWidget(QLabel("G:"))
-        self._lower_g = QLineEdit("0")
-        self._lower_g.setFixedWidth(50)
-        row1.addWidget(self._lower_g)
-        row1.addWidget(QLabel("R:"))
-        self._lower_r = QLineEdit("0")
-        self._lower_r.setFixedWidth(50)
-        row1.addWidget(self._lower_r)
-        self._lower_swatch = ColorSwatch(QColor(0, 0, 0))
+        row1.addWidget(QLabel("下界"))
+        self._lower_swatch = ColorSwatch(QColor(255, 0, 0))
         row1.addWidget(self._lower_swatch)
-        pick_lower = QPushButton("取色")
-        pick_lower.setFixedWidth(40)
-        pick_lower.clicked.connect(lambda _=False: self.color_pick_requested.emit("lower"))
-        row1.addWidget(pick_lower)
+        self._lower_hex = QLineEdit("#FF0000")
+        self._lower_hex.setFixedWidth(80)
+        self._lower_hex.setPlaceholderText("#RRGGBB")
+        row1.addWidget(self._lower_hex)
+        self._pick_lower_btn = QPushButton("取色")
+        self._pick_lower_btn.setFixedWidth(60)
+        self._pick_lower_btn.setStyleSheet("padding: 2px 4px;")
+        self._pick_lower_btn.clicked.connect(lambda _=False: self._on_pick_click("lower"))
+        row1.addWidget(self._pick_lower_btn)
         self.add_layout(row1)
 
-        # 上界
-        upper_label = QLabel("上界 (BGR):")
-        upper_label.setStyleSheet("color: #fea; font-weight: bold; border: none;")
-        self.add_widget(upper_label)
-
+        # 上界（默认白色，与 Vue 版一致）
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("B:"))
-        self._upper_b = QLineEdit("255")
-        self._upper_b.setFixedWidth(50)
-        row2.addWidget(self._upper_b)
-        row2.addWidget(QLabel("G:"))
-        self._upper_g = QLineEdit("255")
-        self._upper_g.setFixedWidth(50)
-        row2.addWidget(self._upper_g)
-        row2.addWidget(QLabel("R:"))
-        self._upper_r = QLineEdit("255")
-        self._upper_r.setFixedWidth(50)
-        row2.addWidget(self._upper_r)
+        row2.addWidget(QLabel("上界"))
         self._upper_swatch = ColorSwatch(QColor(255, 255, 255))
         row2.addWidget(self._upper_swatch)
-        pick_upper = QPushButton("取色")
-        pick_upper.setFixedWidth(40)
-        pick_upper.clicked.connect(lambda _=False: self.color_pick_requested.emit("upper"))
-        row2.addWidget(pick_upper)
+        self._upper_hex = QLineEdit("#FFFFFF")
+        self._upper_hex.setFixedWidth(80)
+        self._upper_hex.setPlaceholderText("#RRGGBB")
+        row2.addWidget(self._upper_hex)
+        self._pick_upper_btn = QPushButton("取色")
+        self._pick_upper_btn.setFixedWidth(60)
+        self._pick_upper_btn.setStyleSheet("padding: 2px 4px;")
+        self._pick_upper_btn.clicked.connect(lambda _=False: self._on_pick_click("upper"))
+        row2.addWidget(self._pick_upper_btn)
         self.add_layout(row2)
 
-        # 文件名
+        # 文件名 + 执行
         row3 = QHBoxLayout()
-        row3.addWidget(QLabel("文件名:"))
-        self._filename = QLineEdit("inrange.png")
+        self._filename = QLineEdit("_inrange.png")
         row3.addWidget(self._filename)
-        self.add_layout(row3)
-
-        # 执行
-        exec_btn = QPushButton("执行 inRange")
+        exec_btn = QPushButton("⬛ 执行")
         exec_btn.clicked.connect(self._on_execute)
-        self.add_widget(exec_btn)
+        row3.addWidget(exec_btn)
+        self.add_layout(row3)
 
         self._pick_target: str | None = None
 
-    def set_picked_color(self, b: int, g: int, r: int):
-        """从取色器设置颜色值"""
-        if self._pick_target == "lower":
-            self._lower_b.setText(str(b))
-            self._lower_g.setText(str(g))
-            self._lower_r.setText(str(r))
-            self._lower_swatch.set_color(QColor(r, g, b))
-        elif self._pick_target == "upper":
-            self._upper_b.setText(str(b))
-            self._upper_g.setText(str(g))
-            self._upper_r.setText(str(r))
-            self._upper_swatch.set_color(QColor(r, g, b))
+    # ============ 取色模式 ============
 
-    def set_pick_target(self, target: str):
-        self._pick_target = target
+    def _on_pick_click(self, target: str):
+        """取色按钮点击：两段式切换（与 Vue 版一致）"""
+        if self._pick_target == target:
+            # 同一目标 → 取消取色
+            self._pick_target = None
+            self._update_pick_buttons()
+            self.color_pick_requested.emit("")
+        else:
+            # 切换目标或新目标 → 进入取色
+            self._pick_target = target
+            self._update_pick_buttons()
+            self.color_pick_requested.emit(target)
+
+    def _update_pick_buttons(self):
+        """刷新按钮文本：取色 / 取色中"""
+        self._pick_lower_btn.setText("取色中" if self._pick_target == "lower" else "取色")
+        self._pick_upper_btn.setText("取色中" if self._pick_target == "upper" else "取色")
+
+    def cancel_pick(self):
+        """取消取色模式（由外部在取色完成后调用）"""
+        self._pick_target = None
+        self._update_pick_buttons()
+
+    # ============ 颜色设置 ============
+
+    def set_picked_color(self, blue: int, green: int, red: int):
+        """从取色器设置颜色值（QColor 分量 → RGB hex）"""
+        hex_str = f"#{red:02X}{green:02X}{blue:02X}"
+        qcolor = QColor(red, green, blue)
+        if self._pick_target == "lower":
+            self._lower_hex.setText(hex_str)
+            self._lower_swatch.set_color(qcolor)
+        elif self._pick_target == "upper":
+            self._upper_hex.setText(hex_str)
+            self._upper_swatch.set_color(qcolor)
+
+    # ============ 执行 ============
 
     def _on_execute(self):
-        try:
-            lb = int(self._lower_b.text() or 0)
-            lg = int(self._lower_g.text() or 0)
-            lr = int(self._lower_r.text() or 0)
-            ub = int(self._upper_b.text() or 255)
-            ug = int(self._upper_g.text() or 255)
-            ur = int(self._upper_r.text() or 255)
-        except ValueError:
-            return
-        self.inrange_execute.emit(
-            lb, lg, lr, ub, ug, ur,
-            self._filename.text() or "inrange.png",
-        )
+        lower_hex = self._lower_hex.text().strip()
+        upper_hex = self._upper_hex.text().strip()
+        filename = self._filename.text() or "_inrange.png"
+        self.inrange_execute.emit(lower_hex, upper_hex, filename)
