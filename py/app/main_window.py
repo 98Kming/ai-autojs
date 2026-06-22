@@ -585,7 +585,6 @@ class MainWindow(QMainWindow):
     def _process_image(self, operation_name: str, processor, *args):
         """通用图像处理执行：读取当前图片 → 处理 → 添加到 ImageModel"""
         import base64
-        import io
         import numpy as np
         from PySide6.QtGui import QImage
         from app.image_processing.operations import np_array_to_pixmap
@@ -602,8 +601,9 @@ class MainWindow(QMainWindow):
             return
 
         w, h = qimg.width(), qimg.height()
+        bpl = qimg.bytesPerLine()
         ptr = qimg.bits()
-        arr = np.array(ptr, dtype=np.uint8).reshape(h, w, 3).copy()
+        arr = np.array(ptr, dtype=np.uint8).reshape(h, bpl)[:, :w * 3].reshape(h, w, 3).copy()
 
         try:
             result = processor(arr, *args)
@@ -617,9 +617,12 @@ class MainWindow(QMainWindow):
             self._status_label.setText(f"{operation_name}结果转换失败")
             return
 
-        with io.BytesIO() as buf:
-            result_pixmap.save(buf, "PNG")
-            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        from PySide6.QtCore import QBuffer
+        qbuf = QBuffer()
+        qbuf.open(QBuffer.ReadWrite)
+        result_pixmap.save(qbuf, "PNG")
+        b64 = base64.b64encode(qbuf.data().data()).decode("ascii")
+        qbuf.close()
 
         self._image_model.add_image(
             data=b64,
