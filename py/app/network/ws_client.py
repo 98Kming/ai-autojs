@@ -47,6 +47,7 @@ class WebSocketClient(QObject):
         # QWebSocket 实例
         self._socket: QWebSocket | None = None
         self._intentional_close = False
+        self._error_handled = False  # 防止 _on_error 和 _on_disconnected 重复清理
 
         # 定时器（在 __init__ 中创建，复用，避免泄漏）
         self._heartbeat_timer = QTimer(self)
@@ -78,14 +79,16 @@ class WebSocketClient(QObject):
     # ============ 公共 API ============
 
     def connect_to_host(self, host: str, port: int):
-        """更新地址并连接"""
+        """更新地址并手动连接（停止自动重连）"""
         self._host = host
         self._port = port
+        self._reconnect.destroy()
         self._do_connect()
 
     def disconnect(self):
         """主动断开连接"""
         self._intentional_close = True
+        self._error_handled = True
         self._reconnect.destroy()
         self._stop_heartbeat()
         self._clear_execution_timeout()
@@ -130,12 +133,23 @@ class WebSocketClient(QObject):
             print("[WS] 已连接，无需重复连接")
             return
 
-        # 清理旧 socket（避免重连时泄漏）
+        # 清理旧 socket：先断开信号再 deleteLater，防止旧 socket 的
+        # disconnected 信号在延迟删除时触发 _on_disconnected 覆盖新 socket 引用
         if self._socket:
-            self._socket.deleteLater()
+            old = self._socket
             self._socket = None
+            try:
+                old.connected.disconnect(self._on_connected)
+                old.disconnected.disconnect(self._on_disconnected)
+                old.textMessageReceived.disconnect(self._on_text_message)
+                old.binaryMessageReceived.disconnect(self._on_binary_message)
+                old.errorOccurred.disconnect(self._on_error)
+            except (TypeError, RuntimeError):
+                pass  # 信号可能未连接
+            old.deleteLater()
 
         self._intentional_close = False
+        self._error_handled = False
         self.status_changed.emit("connecting")
 
         url = f"ws://{self._host}:{self._port}"
@@ -152,6 +166,7 @@ class WebSocketClient(QObject):
 
     def _on_connected(self):
         print("[WS] 连接成功")
+        self._error_handled = True
         self.status_changed.emit("connected")
         self._reconnect.reset()
         self._start_heartbeat()
@@ -159,19 +174,32 @@ class WebSocketClient(QObject):
 
     def _on_disconnected(self):
         print("[WS] 连接关闭")
+        # 如果 _on_error 已处理（如连接失败时 errorOccurred 先于 disconnected），
+        # 跳过重复的状态变更和重连调度
+        already_handled = self._error_handled
         self._socket = None
+        self._error_handled = True
         self._stop_heartbeat()
         self._clear_execution_timeout()
         self._clear_pending_binary()
 
-        if not self._intentional_close:
+        if not self._intentional_close and not already_handled:
             self.status_changed.emit("disconnected")
             self.disconnected.emit()
             self._reconnect.schedule()
 
     def _on_error(self, error: QAbstractSocket.SocketError):
         print(f"[WS] 连接错误: {error}")
-        # errorOccurred 之后会触发 disconnected，不在此处设置状态
+        # 连接失败时 errorOccurred 触发但 disconnected 可能不触发，
+        # 导致 UI 按钮卡在 disabled 状态。仅在未连接状态下触发清理。
+        if (self._socket is not None
+                and not self._error_handled
+                and self._socket.state() != QAbstractSocket.ConnectedState):
+            self._error_handled = True
+            # 不主动 close socket，避免触发 _on_disconnected 导致双次 emit
+            if not self._intentional_close:
+                self.status_changed.emit("disconnected")
+                self._reconnect.schedule()
 
     def _on_text_message(self, text: str):
         """处理文本帧"""
@@ -247,8 +275,26 @@ class WebSocketClient(QObject):
     def _on_heartbeat_timeout(self):
         print("[WS] 心跳超时，断开连接")
         if self._socket:
-            self._socket.close()
+            self._error_handled = True
+            old = self._socket
             self._socket = None
+            try:
+                old.connected.disconnect(self._on_connected)
+                old.disconnected.disconnect(self._on_disconnected)
+                old.textMessageReceived.disconnect(self._on_text_message)
+                old.binaryMessageReceived.disconnect(self._on_binary_message)
+                old.errorOccurred.disconnect(self._on_error)
+            except (TypeError, RuntimeError):
+                pass
+            old.close()
+            old.deleteLater()
+        self._stop_heartbeat()
+        self._clear_execution_timeout()
+        self._clear_pending_binary()
+        if not self._intentional_close:
+            self.status_changed.emit("disconnected")
+            self.disconnected.emit()
+            self._reconnect.schedule()
 
     # ============ 执行超时 ============
 
