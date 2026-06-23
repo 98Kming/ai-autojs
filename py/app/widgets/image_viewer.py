@@ -14,7 +14,7 @@ import base64
 from PySide6.QtCore import Qt, Signal, QPointF, QRectF
 from PySide6.QtGui import (
     QPixmap, QPainter, QPen, QColor, QWheelEvent, QMouseEvent,
-    QKeyEvent, QBrush, QCursor,
+    QKeyEvent, QBrush, QCursor, QResizeEvent
 )
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 
@@ -29,6 +29,7 @@ class ImageViewer(QGraphicsView):
     mouse_moved_image = Signal(QPointF)  # 鼠标在图片坐标系中的位置
     mouse_left_image = Signal()  # 鼠标离开图片区域
     zoom_changed = Signal(float)  # 当前缩放比例
+    viewport_resized = Signal(int, int)  # 视窗宽、高
     region_selected = Signal(int, int, int, int)  # (x, y, w, h) 裁剪区域
     pixel_picked = Signal(int, int)  # 取色模式下点击图片 (x, y)
 
@@ -158,6 +159,12 @@ class ImageViewer(QGraphicsView):
             self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
             self._zoom_level = self.transform().m11()
             self.zoom_changed.emit(self._zoom_level)
+
+    def resizeEvent(self, event: QResizeEvent):
+        """视窗大小变化"""
+        super().resizeEvent(event)
+        vp = self.viewport()
+        self.viewport_resized.emit(vp.width(), vp.height())
 
     # ============ 事件处理 ============
 

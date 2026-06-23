@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
 
         # 执行起始时间（用于计算耗时）
         self._exec_start_time: float = 0.0
+        self._current_zoom: float = 1.0
 
         # ============ 恢复状态 ============
         self._restore_window_state()
@@ -175,6 +176,14 @@ class MainWindow(QMainWindow):
         toolbar_layout.addWidget(self._magnifier_checkbox)
 
         toolbar_layout.addStretch()
+
+        self._image_info_label = QLabel()
+        self._image_info_label.setStyleSheet(f"color: {COLORS['text_placeholder']}; font-size: 12px; border: none;")
+        toolbar_layout.addWidget(self._image_info_label)
+
+        self._viewport_label = QLabel()
+        self._viewport_label.setStyleSheet(f"color: {COLORS['text_placeholder']}; font-size: 12px; border: none;")
+        toolbar_layout.addWidget(self._viewport_label)
 
         self._zoom_label = QLabel("100%")
         self._zoom_label.setStyleSheet(f"color: {COLORS['text_placeholder']}; font-size: 12px; border: none;")
@@ -309,6 +318,7 @@ class MainWindow(QMainWindow):
         self._image_list_panel.delete_image.connect(self._on_image_delete)
         self._image_list_panel.clear_all.connect(self._image_model.clear_all)
         self._image_viewer.zoom_changed.connect(self._on_zoom_changed)
+        self._image_viewer.viewport_resized.connect(self._on_viewport_resized)
         self._image_viewer.mouse_moved_image.connect(self._on_viewer_mouse_moved)
         self._image_viewer.mouse_left_image.connect(self._on_viewer_mouse_left)
         self._image_viewer.region_selected.connect(self._on_crop_region_selected)
@@ -533,8 +543,25 @@ class MainWindow(QMainWindow):
 
     def _on_zoom_changed(self, zoom: float):
         """缩放比例变化"""
+        self._current_zoom = zoom
         pct = int(zoom * 100)
         self._zoom_label.setText(f"{pct}%")
+        self._update_image_info()
+
+    def _update_image_info(self):
+        """更新图片原图和显示尺寸"""
+        pixmap = self._image_viewer.get_current_pixmap()
+        if pixmap is None or pixmap.isNull():
+            self._image_info_label.setText("")
+            return
+        iw, ih = pixmap.width(), pixmap.height()
+        dw = int(iw * self._current_zoom)
+        dh = int(ih * self._current_zoom)
+        self._image_info_label.setText(f"原图 {iw}×{ih} | 显示 {dw}×{dh}")
+
+    def _on_viewport_resized(self, w: int, h: int):
+        """视窗大小变化"""
+        self._viewport_label.setText(f"视窗 {w}×{h}")
 
     def _on_viewer_mouse_moved(self, scene_pos):
         """鼠标在图片上移动 → 更新放大镜"""
