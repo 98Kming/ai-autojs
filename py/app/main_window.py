@@ -310,6 +310,7 @@ class MainWindow(QMainWindow):
         self._image_list_panel.clear_all.connect(self._image_model.clear_all)
         self._image_viewer.zoom_changed.connect(self._on_zoom_changed)
         self._image_viewer.mouse_moved_image.connect(self._on_viewer_mouse_moved)
+        self._image_viewer.mouse_left_image.connect(self._on_viewer_mouse_left)
         self._image_viewer.region_selected.connect(self._on_crop_region_selected)
         self._image_viewer.pixel_picked.connect(self._on_pixel_picked)
         self._image_model.images_changed.connect(self._on_images_changed)
@@ -567,6 +568,10 @@ class MainWindow(QMainWindow):
         self._magnifier_lens.set_source(qimage)
         self._magnifier_lens.show()
         self._magnifier_lens.raise_()
+
+    def _on_viewer_mouse_left(self):
+        """鼠标离开图片 → 隐藏放大镜"""
+        self._magnifier_lens.hide()
 
     def _on_magnifier_toggled(self, checked: bool):
         """放大镜开关"""

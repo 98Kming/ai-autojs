@@ -27,6 +27,7 @@ class ImageViewer(QGraphicsView):
 
     # 信号
     mouse_moved_image = Signal(QPointF)  # 鼠标在图片坐标系中的位置
+    mouse_left_image = Signal()  # 鼠标离开图片区域
     zoom_changed = Signal(float)  # 当前缩放比例
     region_selected = Signal(int, int, int, int)  # (x, y, w, h) 裁剪区域
     pixel_picked = Signal(int, int)  # 取色模式下点击图片 (x, y)
@@ -61,6 +62,9 @@ class ImageViewer(QGraphicsView):
         # 方向键虚拟光标（亚像素累积）
         self._virtual_cursor: QPointF | None = None
         self._sync_virtual_from_mouse = True  # setPos 后短暂关闭，防止覆写
+
+        # 鼠标离开图片区域标记
+        self._mouse_outside_image = False
 
         # 样式
         self.setStyleSheet(f"background: #1a1a2e; border: none;")
@@ -134,6 +138,19 @@ class ImageViewer(QGraphicsView):
         """鼠标进入图片区域自动聚焦，无需点击即可响应方向键"""
         self.setFocus()
         super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """鼠标离开整个查看器区域"""
+        self._mouse_outside_image = True
+        self.mouse_left_image.emit()
+        super().leaveEvent(event)
+
+    def _is_in_image(self, image_pos: QPointF) -> bool:
+        """检查坐标是否在图片像素范围内"""
+        if self._current_pixmap is None:
+            return False
+        r = self._current_pixmap.rect()
+        return 0 <= image_pos.x() < r.width() and 0 <= image_pos.y() < r.height()
 
     def reset_zoom(self):
         """重置缩放以适配视图"""
@@ -212,6 +229,17 @@ class ImageViewer(QGraphicsView):
         # 发射鼠标在图片像素坐标系中的位置
         scene_pos = self.mapToScene(event.pos())
         image_pos = self._image_coord(scene_pos)
+
+        # 鼠标在图片外（暗色背景）时隐藏放大镜
+        if not self._is_in_image(image_pos):
+            if not self._mouse_outside_image:
+                self._mouse_outside_image = True
+                self.mouse_left_image.emit()
+            self._sync_virtual_from_mouse = True
+            super().mouseMoveEvent(event)
+            return
+
+        self._mouse_outside_image = False
         if self._sync_virtual_from_mouse:
             self._virtual_cursor = image_pos
             self.mouse_moved_image.emit(image_pos)
