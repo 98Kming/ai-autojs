@@ -571,8 +571,9 @@ class MainWindow(QMainWindow):
         if pixmap is None:
             return
 
-        # 更新放大镜位置和源像素
-        x, y = int(scene_pos.x()), int(scene_pos.y())
+        # 更新放大镜位置和源像素（scene_pos → image 像素坐标）
+        img_pos = self._image_viewer.scene_to_image(scene_pos)
+        x, y = int(img_pos.x()), int(img_pos.y())
         self._magnifier_lens.set_pixel(x, y)
 
         # 定位放大镜在鼠标右下角

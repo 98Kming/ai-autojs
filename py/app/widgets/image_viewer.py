@@ -6,6 +6,10 @@
 - 双击重置
 - 放大镜叠加
 - 裁剪框选
+
+架构：view transform 恒为 identity，缩放和平移全部通过 pixmap_item 的
+setPos（平移）和 setScale（缩放）实现，彻底避开 QGraphicsView 内部
+viewportTransform 与 transform() 不同步的问题。
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import base64
 from PySide6.QtCore import Qt, Signal, QPointF, QRectF
 from PySide6.QtGui import (
     QPixmap, QPainter, QPen, QColor, QWheelEvent, QMouseEvent,
-    QKeyEvent, QBrush, QCursor, QResizeEvent
+    QKeyEvent, QBrush, QCursor, QResizeEvent,
 )
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 
@@ -26,7 +30,7 @@ class ImageViewer(QGraphicsView):
     """图片查看器：缩放、平移、叠加层"""
 
     # 信号
-    mouse_moved_image = Signal(QPointF)  # 鼠标在图片坐标系中的位置
+    mouse_moved_image = Signal(QPointF)  # 鼠标在场景坐标系中的位置（用于 lens 定位）
     mouse_left_image = Signal()  # 鼠标离开图片区域
     zoom_changed = Signal(float)  # 当前缩放比例
     viewport_resized = Signal(int, int)  # 视窗宽、高
@@ -35,55 +39,91 @@ class ImageViewer(QGraphicsView):
 
     MIN_ZOOM = 0.2
     MAX_ZOOM = 10.0
-    ZOOM_STEP = 1.15  # 每级缩放因子
+    ZOOM_STEP = 1.15
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
 
-        # 图片项
         self._pixmap_item: QGraphicsPixmapItem | None = None
         self._current_pixmap: QPixmap | None = None
         self._current_image: ImageEntry | None = None
+        self._crop_rect_item = None
+        self._crop_pixel_rect: QRectF | None = None  # 裁剪区域（图片像素坐标）
 
-        # 裁剪矩形
-        self._crop_rect_item = None  # QGraphicsRectItem
-
-        # 缩放状态
+        # 缩放/平移状态
         self._zoom_level = 1.0
+        # 居中偏移（fitInView 计算得出，视窗 resize 时重算）
+        self._center_offset = QPointF(0, 0)
+        # 用户拖拽偏移（resize 时保留）
+        self._pan_offset = QPointF(0, 0)
 
-        # 平移状态
         self._panning = False
         self._pan_start = QPointF()
 
-        # 取色模式
         self._pick_mode = False
 
-        # 方向键虚拟光标（亚像素累积）
         self._virtual_cursor: QPointF | None = None
-        self._sync_virtual_from_mouse = True  # setPos 后短暂关闭，防止覆写
-
-        # 鼠标离开图片区域标记
+        self._sync_virtual_from_mouse = True
         self._mouse_outside_image = False
 
-        # 样式
+        # view transform 恒为 identity
         self.setStyleSheet(f"background: #1a1a2e; border: none;")
         self.setRenderHints(
             QPainter.Antialiasing | QPainter.SmoothPixmapTransform
         )
         self.setDragMode(QGraphicsView.NoDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.NoAnchor)
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-        # 键盘聚焦（方向键漫游）
         self.setFocusPolicy(Qt.StrongFocus)
-
-        # 跟踪鼠标
         self.setMouseTracking(True)
+
+    # ============ item 变换辅助 ============
+
+    def _item_set_transform(self):
+        self._pixmap_item.setScale(self._zoom_level)
+
+    def _sync_item_pos(self):
+        """用 _center_offset + _pan_offset 更新 pixmap_item 位置"""
+        self._pixmap_item.setPos(self._center_offset + self._pan_offset)
+
+    def _recenter(self):
+        """根据当前视窗大小重算居中偏移，保留用户拖拽偏移"""
+        if self._pixmap_item is None or self._current_pixmap is None:
+            return
+        vp = self.viewport()
+        dw = self._current_pixmap.width() * self._zoom_level
+        dh = self._current_pixmap.height() * self._zoom_level
+        self._center_offset = QPointF(
+            (vp.width() - dw) / 2,
+            (vp.height() - dh) / 2,
+        )
+        self._sync_item_pos()
+        self._sync_crop_rect()
+
+    def _scene_to_pixel(self, scene_pos: QPointF) -> QPointF:
+        """场景坐标 → 图片像素坐标"""
+        if self._pixmap_item is None:
+            return scene_pos
+        p = self._pixmap_item.pos()
+        return QPointF(
+            (scene_pos.x() - p.x()) / self._zoom_level,
+            (scene_pos.y() - p.y()) / self._zoom_level,
+        )
+
+    def _pixel_to_scene(self, pixel: QPointF) -> QPointF:
+        """图片像素坐标 → 场景坐标"""
+        if self._pixmap_item is None:
+            return pixel
+        p = self._pixmap_item.pos()
+        return QPointF(
+            p.x() + self._zoom_level * pixel.x(),
+            p.y() + self._zoom_level * pixel.y(),
+        )
 
     # ============ 公共方法 ============
 
@@ -100,23 +140,25 @@ class ImageViewer(QGraphicsView):
         self._scene.addItem(self._pixmap_item)
         self._scene.setSceneRect(QRectF(pixmap.rect()))
 
-        # 重置裁剪矩形
         self._crop_rect_item = None
+        self._crop_pixel_rect = None
 
-        # 适配视图
+        # fitInView 计算合适缩放，提取居中偏移，然后 view 重置为 identity
         self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
-        self._zoom_level = self.transform().m11()  # 水平缩放因子
+        self._zoom_level = self.transform().m11()
+        self.resetTransform()
+        self._pan_offset = QPointF(0, 0)
+        self._recenter()
+        self._item_set_transform()
         self.zoom_changed.emit(self._zoom_level)
-
-        # 自动聚焦，无需先点击图片即可响应方向键
         self.setFocus()
 
     def get_image_at_cursor(self) -> QPointF | None:
-        """获取鼠标处的图片坐标"""
+        """获取鼠标处的图片像素坐标"""
         if self._pixmap_item is None:
             return None
-        pos = self.mapToScene(self.mapFromGlobal(self.cursor().pos()))
-        return pos
+        scene_pos = self.mapToScene(self.mapFromGlobal(self.cursor().pos()))
+        return self._scene_to_pixel(scene_pos)
 
     def get_current_pixmap(self) -> QPixmap | None:
         return self._current_pixmap
@@ -124,78 +166,85 @@ class ImageViewer(QGraphicsView):
     def get_current_image(self) -> ImageEntry | None:
         return self._current_image
 
+    def scene_to_image(self, scene_pos: QPointF) -> QPointF:
+        """场景坐标 → 图片像素坐标（公开接口）"""
+        return self._scene_to_pixel(scene_pos)
+
     def set_pick_mode(self, enabled: bool):
-        """设置取色模式开关"""
         self._pick_mode = enabled
-        if enabled:
-            self.setCursor(Qt.CrossCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.CrossCursor if enabled else Qt.ArrowCursor)
 
     def is_pick_mode(self) -> bool:
         return self._pick_mode
 
     def enterEvent(self, event):
-        """鼠标进入图片区域自动聚焦，无需点击即可响应方向键"""
         self.setFocus()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        """鼠标离开整个查看器区域"""
         self._mouse_outside_image = True
         self.mouse_left_image.emit()
         super().leaveEvent(event)
 
-    def _is_in_image(self, image_pos: QPointF) -> bool:
-        """检查坐标是否在图片像素范围内"""
+    def _is_in_image(self, pixel_pos: QPointF) -> bool:
         if self._current_pixmap is None:
             return False
         r = self._current_pixmap.rect()
-        return 0 <= image_pos.x() < r.width() and 0 <= image_pos.y() < r.height()
+        return 0 <= pixel_pos.x() < r.width() and 0 <= pixel_pos.y() < r.height()
 
     def reset_zoom(self):
-        """重置缩放以适配视图"""
+        """重置缩放平移以适配视图"""
         if self._pixmap_item:
+            self.clear_crop()
             self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
             self._zoom_level = self.transform().m11()
+            self.resetTransform()
+            self._pan_offset = QPointF(0, 0)
+            self._recenter()
+            self._item_set_transform()
             self.zoom_changed.emit(self._zoom_level)
 
     def resizeEvent(self, event: QResizeEvent):
-        """视窗大小变化"""
         super().resizeEvent(event)
+        self._recenter()
         vp = self.viewport()
         self.viewport_resized.emit(vp.width(), vp.height())
 
     # ============ 事件处理 ============
 
     def wheelEvent(self, event: QWheelEvent):
-        """滚轮缩放"""
+        """滚轮缩放（以鼠标位置为中心）"""
         if self._pixmap_item is None:
             return
 
-        delta = event.angleDelta().y()
-        if delta > 0:
-            factor = self.ZOOM_STEP
-        else:
-            factor = 1.0 / self.ZOOM_STEP
-
+        factor = self.ZOOM_STEP if event.angleDelta().y() > 0 else 1.0 / self.ZOOM_STEP
         new_zoom = self._zoom_level * factor
         if new_zoom < self.MIN_ZOOM or new_zoom > self.MAX_ZOOM:
             return
 
+        # 记录缩放前鼠标处的图片像素
+        old_pixel = self._scene_to_pixel(
+            self.mapToScene(int(event.position().x()), int(event.position().y()))
+        )
+
         self._zoom_level = new_zoom
-        self.scale(factor, factor)
+        self._item_set_transform()
+        self._recenter()
+
+        # 调整拖拽偏移使缩放中心像素仍位于鼠标下方
+        target_scene = self._pixel_to_scene(old_pixel)
+        current_scene = self.mapToScene(int(event.position().x()), int(event.position().y()))
+        self._pan_offset += current_scene - target_scene
+        self._sync_item_pos()
+        self._sync_crop_rect()
         self.zoom_changed.emit(self._zoom_level)
 
     def _is_ctrl_pressed(self) -> bool:
-        """实时检测 Ctrl 键状态（不依赖 keyPress/keyRelease 追踪，避免焦点丢失问题）"""
         from PySide6.QtWidgets import QApplication
         return bool(QApplication.keyboardModifiers() & Qt.ControlModifier)
 
     def mousePressEvent(self, event: QMouseEvent):
-        """鼠标按下"""
         if event.button() == Qt.LeftButton:
-            # 取色模式优先：点击取色，可多次点击覆盖前一次结果
             if self._pick_mode:
                 scene_pos = self.mapToScene(event.pos())
                 x, y = int(scene_pos.x()), int(scene_pos.y())
@@ -204,10 +253,8 @@ class ImageViewer(QGraphicsView):
                 return
 
             if self._is_ctrl_pressed():
-                # Ctrl+拖拽：开始裁剪框选
                 self._start_crop(event.position())
             else:
-                # 普通拖拽：平移
                 self._panning = True
                 self._pan_start = event.position()
                 self.setCursor(Qt.ClosedHandCursor)
@@ -219,26 +266,19 @@ class ImageViewer(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        """鼠标移动"""
         if self._panning:
             delta = event.position() - self._pan_start
             self._pan_start = event.position()
-            self.horizontalScrollBar().setValue(
-                self.horizontalScrollBar().value() - int(delta.x())
-            )
-            self.verticalScrollBar().setValue(
-                self.verticalScrollBar().value() - int(delta.y())
-            )
+            self._pan_offset += delta
+            self._sync_item_pos()
+            self._sync_crop_rect()
         elif self._is_ctrl_pressed() and self._crop_rect_item:
-            # 更新裁剪矩形
             self._update_crop(event.position())
 
-        # 发射鼠标在图片像素坐标系中的位置
         scene_pos = self.mapToScene(event.pos())
-        image_pos = self._image_coord(scene_pos)
+        pixel_pos = self._scene_to_pixel(scene_pos)
 
-        # 鼠标在图片外（暗色背景）时隐藏放大镜
-        if not self._is_in_image(image_pos):
+        if not self._is_in_image(pixel_pos):
             if not self._mouse_outside_image:
                 self._mouse_outside_image = True
                 self.mouse_left_image.emit()
@@ -248,36 +288,26 @@ class ImageViewer(QGraphicsView):
 
         self._mouse_outside_image = False
         if self._sync_virtual_from_mouse:
-            self._virtual_cursor = image_pos
-            self.mouse_moved_image.emit(image_pos)
+            self._virtual_cursor = pixel_pos
+            self.mouse_moved_image.emit(scene_pos)
         self._sync_virtual_from_mouse = True
 
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        """鼠标释放"""
         if event.button() in (Qt.LeftButton, Qt.MiddleButton):
             if self._is_ctrl_pressed() and self._crop_rect_item:
                 self._finish_crop()
             self._panning = False
             if not self._pick_mode:
                 self.setCursor(Qt.ArrowCursor)
-
         super().mouseReleaseEvent(event)
 
-    def _image_coord(self, scene_pos: QPointF) -> QPointF:
-        """scene 坐标 → 图片像素坐标（pixmap_item 移位后两者有偏移）"""
-        if self._pixmap_item:
-            p = self._pixmap_item.pos()
-            return QPointF(scene_pos.x() - p.x(), scene_pos.y() - p.y())
-        return scene_pos
-
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        """双击重置缩放"""
         self.reset_zoom()
 
     def keyPressEvent(self, event: QKeyEvent):
-        """方向键移动鼠标 1 图片像素（亚像素累积，任意缩放比精确）"""
+        """方向键移动鼠标 1 图片像素"""
         if self._pixmap_item is None:
             super().keyPressEvent(event)
             return
@@ -296,44 +326,43 @@ class ImageViewer(QGraphicsView):
             super().keyPressEvent(event)
             return
 
-        # 初始化虚拟光标（首次或缩放重置后）
         if self._virtual_cursor is None:
             pos = self.get_image_at_cursor()
             if pos is None:
                 return
             self._virtual_cursor = pos
 
-        # 移动 1 图片像素
         self._virtual_cursor += QPointF(dx, dy)
-        
-        # 夹紧至图片边界
         r = self._current_pixmap.rect()
         self._virtual_cursor.setX(max(0.0, min(self._virtual_cursor.x(), r.width() - 1)))
         self._virtual_cursor.setY(max(0.0, min(self._virtual_cursor.y(), r.height() - 1)))
 
-        # 先发送精确位置给放大镜
-        self.mouse_moved_image.emit(self._virtual_cursor)
+        self.mouse_moved_image.emit(
+            self._pixel_to_scene(self._virtual_cursor)
+        )
 
-        # 移动 OS 光标；关闭鼠标事件对虚拟光标的覆写（setPos 会触发 mouseMoveEvent）
         self._sync_virtual_from_mouse = False
-        scene_pos = self._virtual_cursor + self._pixmap_item.pos()
+        scene_pos = self._pixel_to_scene(self._virtual_cursor)
         view_pos = self.mapFromScene(scene_pos)
         global_pos = self.mapToGlobal(view_pos)
         QCursor.setPos(global_pos)
-
         event.accept()
+
+    def _sync_crop_rect(self):
+        """从 _crop_pixel_rect 更新场景中裁剪框的位置（缩放/重居中后调用）"""
+        if self._crop_pixel_rect is not None and self._crop_rect_item is not None:
+            tl = self._pixel_to_scene(self._crop_pixel_rect.topLeft())
+            br = self._pixel_to_scene(self._crop_pixel_rect.bottomRight())
+            self._crop_rect_item.setRect(QRectF(tl, br))
 
     # ============ 裁剪 ============
 
     def _start_crop(self, start_pos: QPointF):
-        """开始裁剪框选"""
         from PySide6.QtWidgets import QGraphicsRectItem
         from PySide6.QtCore import QPoint
-        # 先清除上次的框选
         self.clear_crop()
         scene_pos = self.mapToScene(QPoint(int(start_pos.x()), int(start_pos.y())))
-        self._crop_start = scene_pos
-
+        self._crop_start_pixel = self._scene_to_pixel(scene_pos)
         pen = QPen(QColor(COLORS["primary"]), 1, Qt.DashLine)
         brush = QBrush(QColor(64, 158, 255, 40))
         self._crop_rect_item = QGraphicsRectItem(QRectF(scene_pos, scene_pos))
@@ -342,41 +371,42 @@ class ImageViewer(QGraphicsView):
         self._scene.addItem(self._crop_rect_item)
 
     def _update_crop(self, current_pos: QPointF):
-        """更新裁剪矩形"""
         if self._crop_rect_item is None:
             return
         from PySide6.QtCore import QPoint
         scene_pos = self.mapToScene(QPoint(int(current_pos.x()), int(current_pos.y())))
-        rect = QRectF(self._crop_start, scene_pos).normalized()
+        # 起始点用像素坐标实时转换，缩放后仍能对齐图片
+        start_scene = self._pixel_to_scene(self._crop_start_pixel)
+        rect = QRectF(start_scene, scene_pos).normalized()
         self._crop_rect_item.setRect(rect)
+        # 保存图片像素坐标版本，用于缩放后重绘
+        tl = self._scene_to_pixel(rect.topLeft())
+        br = self._scene_to_pixel(rect.bottomRight())
+        self._crop_pixel_rect = QRectF(tl, br)
 
     def _finish_crop(self):
-        """完成裁剪框选"""
-        if self._crop_rect_item is None:
+        if self._crop_pixel_rect is None:
             return
-        rect = self._crop_rect_item.rect().toRect()
-        if rect.width() > 5 and rect.height() > 5:
+        r = self._crop_pixel_rect.toRect()
+        if r.width() > 5 and r.height() > 5:
             self.region_selected.emit(
-                rect.x(), rect.y(), rect.width(), rect.height()
+                r.x(), r.y(), r.width(), r.height()
             )
-        # 保留矩形以供显示，在 load_image 时清除
 
     def get_crop_rect(self) -> QRectF | None:
-        """获取当前裁剪矩形"""
         if self._crop_rect_item:
             return self._crop_rect_item.rect()
         return None
 
     def clear_crop(self):
-        """清除裁剪矩形"""
         if self._crop_rect_item:
             self._scene.removeItem(self._crop_rect_item)
             self._crop_rect_item = None
+        self._crop_pixel_rect = None
 
     # ============ 内部 ============
 
     def _load_pixmap(self, entry: ImageEntry) -> QPixmap:
-        """从 ImageEntry 加载 QPixmap"""
         pixmap = QPixmap()
         if entry.data:
             try:

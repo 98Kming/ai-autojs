@@ -227,7 +227,7 @@ AutoJS6 基于 Mozilla Rhino（Java 平台的 JS 引擎），以下写法不兼�
 | 操作 | 效果 |
 |---|---|
 | 滚轮 | 以鼠标位置为中心缩放，0.2x ~ 10x，步进 0.2 |
-| 拖拽 | 图片超出可视区时可拖拽平移（cursor grab/grabbing） |
+| 拖拽 | 任意状态（图片小于/大于视窗）均可拖拽平移 |
 | 双击 | 重置缩放/平移恢复适配视图 |
 | 切换图片 | 自动重置 |
 | 缩放提示 | 右上角显示当前缩放百分比 |
@@ -364,7 +364,7 @@ py/
 │       ├── image_toolbar.py         # 左侧竖排工具按钮
 │       ├── image_list_panel.py      # 缩略图列表
 │       ├── image_thumbnail.py       # 72x72 缩略图卡片
-│       ├── image_viewer.py          # QGraphicsView 缩放/平移/叠加
+│       ├── image_viewer.py          # QGraphicsView 缩放/平移（identity view + item setPos/setScale 架构）
 │       ├── magnifier_lens.py        # 10x 放大镜（像素网格+十字线+取色）
 │       ├── crop_overlay.py          # 裁剪框选覆盖层
 │       └── action_panels/           # 图像处理操作面板
@@ -427,7 +427,7 @@ ImageModel.image_added → ImageViewer.load_image
 | 历史记录上限 | 200 | 500 |
 | 超容量对话框 | 有 | **移除** |
 | 图像处理引擎 | OpenCV.js CDN 动态加载 | pip 本地 opencv-python-headless |
-| 缩放平移 | CSS transform | QGraphicsView 原生 |
+| 缩放平移 | CSS transform | QGraphicsView identity view + item setPos/setScale |
 | Base64 转换 | FileReader 异步 | QByteArray.toBase64 同步 |
 
 ### 开发命令
