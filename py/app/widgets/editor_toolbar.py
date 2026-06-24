@@ -80,5 +80,6 @@ class EditorToolbar(QWidget):
             self._clear_btn.setEnabled(False)
         else:
             self._run_btn.setText("▶ 运行")
+            self._run_btn.setEnabled(True)
             self._format_btn.setEnabled(True)
             self._clear_btn.setEnabled(True)

@@ -183,6 +183,12 @@ class WebSocketClient(QObject):
         self._clear_execution_timeout()
         self._clear_pending_binary()
 
+        # 发送错误结果确保 UI 执行状态恢复
+        self.result_received.emit(ResultMessage(
+            type="result", status="error", data_type="text",
+            data="连接已断开",
+        ))
+
         if not self._intentional_close and not already_handled:
             self.status_changed.emit("disconnected")
             self.disconnected.emit()
@@ -291,6 +297,10 @@ class WebSocketClient(QObject):
         self._stop_heartbeat()
         self._clear_execution_timeout()
         self._clear_pending_binary()
+        self.result_received.emit(ResultMessage(
+            type="result", status="error", data_type="text",
+            data="连接已断开",
+        ))
         if not self._intentional_close:
             self.status_changed.emit("disconnected")
             self.disconnected.emit()

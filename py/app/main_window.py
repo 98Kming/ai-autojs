@@ -357,11 +357,13 @@ class MainWindow(QMainWindow):
             self._connection_bar.reset_connect_button()
             self._status_label.setText("未连接")
             self.setWindowTitle("AI-AutoJS - 未连接")
+            self._code_model.set_executing(False)
         elif status == "error":
             self._connection_bar.set_connected(False)
             self._connection_bar.reset_connect_button()
             self._status_label.setText(f"连接错误: {self._conn_model.last_error or '未知错误'}")
             self.setWindowTitle("AI-AutoJS - 连接错误")
+            self._code_model.set_executing(False)
 
     def _on_run(self):
         """执行代码"""
@@ -383,11 +385,13 @@ class MainWindow(QMainWindow):
         )
         self._history_model.add_entry(entry)
 
-        sent = self._ws_client.send_code(code)
+        try:
+            sent = self._ws_client.send_code(code)
+        except Exception:
+            sent = False
         if not sent:
             self._code_model.set_executing(False)
             self._status_label.setText("未连接，无法执行代码")
-            # 将 pending 更新为错误
             self._history_model.update_last_entry(
                 result="未连接，无法执行代码",
                 status="error",
@@ -447,6 +451,20 @@ class MainWindow(QMainWindow):
             self._status_label.setText(f"执行出错: {err_text}")
         else:
             self._status_label.setText("执行成功")
+
+        # 找图结果 → 显示到找图面板
+        if msg.data and msg.data.startswith("{\"found"):
+            import json
+            try:
+                parsed = json.loads(msg.data)
+                panel = self._action_panels.get("find")
+                if panel:
+                    if parsed.get("found"):
+                        panel.set_result(f"找到: ({parsed['x']}, {parsed['y']})")
+                    else:
+                        panel.set_result("未找到匹配")
+            except json.JSONDecodeError:
+                pass
 
     def _on_re_run(self, entry: HistoryEntry):
         """重新运行历史代码"""

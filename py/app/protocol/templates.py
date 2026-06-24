@@ -21,9 +21,8 @@ def find_image_template(template_base64: str, x: int, y: int, w: int, h: int, th
     return f"""(function () {{
     if (!requestScreenCapture()) return "请求截图失败";
     let img = images.captureScreen();
-    // 从 Base64 解码模板图片
-    let templateBytes = images.fromBase64("{template_base64}");
-    let template = images.toImage(templateBytes);
+    // images.fromBase64 直接返回 Image 对象
+    let template = images.fromBase64("{template_base64}");
     // 在指定区域查找
     let result = images.findImage(img, template, {{
         region: [{x}, {y}, {w}, {h}],
