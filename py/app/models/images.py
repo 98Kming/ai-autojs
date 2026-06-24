@@ -37,13 +37,14 @@ class ImageModel(QObject):
     def count(self) -> int:
         return len(self._images)
 
-    def add_image(self, data: str, mime: str = "image/png", code: str = ""):
+    def add_image(self, data: str, mime: str = "image/png", code: str = "", name: str = ""):
         """添加图片
 
         Args:
             data: Base64 编码的图片数据
             mime: MIME 类型
             code: 生成该图片的源代码
+            name: 显示名称
         """
         entry_id = secrets.token_hex(12)
         timestamp = time.time()
@@ -66,6 +67,7 @@ class ImageModel(QObject):
             mime=mime,
             timestamp=timestamp,
             code=code,
+            name=name,
             file=filename,
         )
         self._images.insert(0, entry)
@@ -134,6 +136,7 @@ class ImageModel(QObject):
                     mime=item.get("mime", "image/png"),
                     timestamp=item.get("timestamp", 0.0),
                     code=item.get("code", ""),
+                    name=item.get("name", ""),
                     file=filename,
                 )
                 self._images.append(entry)
@@ -149,6 +152,7 @@ class ImageModel(QObject):
                 "mime": img.mime,
                 "timestamp": img.timestamp,
                 "code": img.code,
+                "name": img.name,
                 "file": img.file,
             })
         config_store.save_images_index(data)

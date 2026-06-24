@@ -108,6 +108,7 @@ class ImageEntry:
     mime: str = "image/png"
     timestamp: float = 0.0
     code: str = ""  # 生成该图片的源代码
+    name: str = ""  # 显示名称（图像处理时由用户设定）
     file: str = ""  # 对应的磁盘文件名（相对于 images/ 目录）
 
 

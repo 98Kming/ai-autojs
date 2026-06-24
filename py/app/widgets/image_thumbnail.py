@@ -84,8 +84,9 @@ class ImageThumbnail(QFrame):
 
     def _generate_name(self) -> str:
         """生成缩略图名称"""
+        if self._image.name:
+            return self._image.name
         if self._image.code:
-            # 从源代码中提取关键信息
             code = self._image.code.strip()
             if "截图" in code or "captureScreen" in code:
                 return "截图"

@@ -616,7 +616,7 @@ class MainWindow(QMainWindow):
 
     # ============ 图像处理执行槽 ============
 
-    def _process_image(self, operation_name: str, processor, *args):
+    def _process_image(self, operation_name: str, processor, *args, name: str = ""):
         """通用图像处理执行：读取当前图片 → 处理 → 添加到 ImageModel"""
         import base64
         import numpy as np
@@ -662,28 +662,29 @@ class MainWindow(QMainWindow):
             data=b64,
             mime="image/png",
             code=f"// {operation_name}",
+            name=name,
         )
         self._status_label.setText(f"{operation_name}完成")
 
     def _on_crop_execute(self, x: int, y: int, w: int, h: int, filename: str):
         from app.image_processing.operations import crop
-        self._process_image("裁剪", crop, x, y, w, h)
+        self._process_image("裁剪", crop, x, y, w, h, name=filename)
 
     def _on_resize_execute(self, new_w: int, new_h: int, interp: str, filename: str):
         from app.image_processing.operations import resize
-        self._process_image("调整大小", resize, new_w, new_h, interp)
+        self._process_image("调整大小", resize, new_w, new_h, interp, name=filename)
 
     def _on_grayscale_execute(self, filename: str):
         from app.image_processing.operations import grayscale
-        self._process_image("灰度化", grayscale)
+        self._process_image("灰度化", grayscale, name=filename)
 
     def _on_threshold_execute(self, thresh: int, maxval: int, filename: str):
         from app.image_processing.operations import threshold_fixed
-        self._process_image("阈值化", threshold_fixed, thresh, maxval)
+        self._process_image("阈值化", threshold_fixed, thresh, maxval, name=filename)
 
     def _on_adaptive_execute(self, maxval: int, method: str, block_size: int, C: int, filename: str):
         from app.image_processing.operations import adaptive_threshold
-        self._process_image("自适应阈值", adaptive_threshold, maxval, method, block_size, C)
+        self._process_image("自适应阈值", adaptive_threshold, maxval, method, block_size, C, name=filename)
 
     def _on_inrange_execute(self, lower_hex: str, upper_hex: str, filename: str):
         from app.image_processing.operations import in_range
@@ -706,7 +707,7 @@ class MainWindow(QMainWindow):
             self._status_label.setText(f"颜色格式无效，请使用 #RRGGBB：\"{lower_hex}\" \"{upper_hex}\"")
             return
 
-        self._process_image("inRange", in_range, lower, upper)
+        self._process_image("inRange", in_range, lower, upper, name=filename)
 
     def _on_find_execute(self, x: int, y: int, w: int, h: int, threshold: float):
         """找图：通过 WebSocket 执行"""
