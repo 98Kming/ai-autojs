@@ -78,6 +78,7 @@ class ImageViewer(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.NoAnchor)
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setFrameShape(QFrame.NoFrame)
+        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setFocusPolicy(Qt.StrongFocus)
