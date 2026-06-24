@@ -24,7 +24,7 @@ class ImageThumbnail(QFrame):
         self.setup_ui()
 
     def setup_ui(self):
-        self.setFixedSize(88, 120)
+        self.setFixedSize(120, 132)
         self.setCursor(Qt.PointingHandCursor)
 
         layout = QVBoxLayout(self)
@@ -53,10 +53,11 @@ class ImageThumbnail(QFrame):
 
         layout.addWidget(thumb, alignment=Qt.AlignCenter)
 
-        # 文件名标签
+        # 文件名标签（自动换行显示完整文件名）
         name = self._generate_name()
         name_label = QLabel(name)
         name_label.setAlignment(Qt.AlignCenter)
+        name_label.setWordWrap(True)
         name_label.setStyleSheet(f"""
             color: {COLORS['text_secondary']};
             font-size: 10px;

@@ -722,7 +722,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
             <label>W <input v-model.number="cropParams.w" type="number" class="ap-input" min="1" /></label>
             <label>H <input v-model.number="cropParams.h" type="number" class="ap-input" min="1" /></label>
           </div>
-          <div class="panel-row"><input v-model="cropFileName" class="ap-input file-input" /><el-button size="small" type="primary" @click="executeCrop">✂️ 执行</el-button></div>
+          <div class="panel-row"><input v-model="cropFileName" class="ap-input file-input" @keydown.enter="executeCrop" /><el-button size="small" type="primary" @click="executeCrop">✂️ 执行</el-button></div>
         </div>
 
         <!-- 灰度面板 -->
@@ -730,7 +730,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
           <div class="panel-title">🌫️ 灰度化</div>
           <div class="panel-info">将彩色图片转为灰度图</div>
           <div class="panel-row">
-            <input v-model="grayFileName" class="ap-input file-input" />
+            <input v-model="grayFileName" class="ap-input file-input" @keydown.enter="executeProcess('grayscale', grayFileName)" />
             <el-button size="small" type="primary" :disabled="!cvReady || isProcessing" :loading="isProcessing" @click="executeProcess('grayscale', grayFileName)">🌫️ 执行</el-button>
           </div>
         </div>
@@ -743,7 +743,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
             <label>最大 <input v-model.number="processMaxval" type="number" class="ap-input" min="0" max="255" /></label>
           </div>
           <div class="panel-row">
-            <input v-model="processThreshFileName" class="ap-input file-input" />
+            <input v-model="processThreshFileName" class="ap-input file-input" @keydown.enter="executeThreshold" />
             <el-button size="small" type="primary" :disabled="!cvReady || isProcessing" :loading="isProcessing" @click="executeThreshold">⚫ 执行</el-button>
           </div>
         </div>
@@ -761,7 +761,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
             <select v-model="processAdaptMethod" class="ap-select"><option v-for="opt in ADAPT_METHODS" :key="opt.value" :value="opt.value">{{ opt.label }}</option></select>
           </div>
           <div class="panel-row">
-            <input v-model="processAdaptFileName" class="ap-input file-input" />
+            <input v-model="processAdaptFileName" class="ap-input file-input" @keydown.enter="executeAdaptive" />
             <el-button size="small" type="primary" :disabled="!cvReady || isProcessing" :loading="isProcessing" @click="executeAdaptive">🔲 执行</el-button>
           </div>
         </div>
@@ -787,7 +787,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
             </el-button>
           </div>
           <div class="panel-row">
-            <input v-model="inRangeFileName" class="ap-input file-input" />
+            <input v-model="inRangeFileName" class="ap-input file-input" @keydown.enter="executeInRange" />
             <el-button size="small" type="primary" :disabled="!cvReady || cvLoading || isProcessing" :loading="isProcessing" @click="executeInRange">{{ cvLoading ? '加载中...' : '⬛ 执行' }}</el-button>
           </div>
         </div>
@@ -829,7 +829,7 @@ window.addEventListener('keydown', onWindowKeyDown); window.addEventListener('ke
             <select v-model="interpolation" class="ap-select"><option v-for="opt in INTERPOLATION_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }} ({{ opt.value }})</option></select>
           </div>
           <div class="panel-row">
-            <input v-model="resizeFileName" class="ap-input file-input" />
+            <input v-model="resizeFileName" class="ap-input file-input" @keydown.enter="executeResize" />
             <el-button size="small" type="primary" :disabled="cvLoading || isResizing" :loading="isResizing" @click="executeResize">{{ cvLoading ? '加载中...' : '📐 执行' }}</el-button>
           </div>
         </div>

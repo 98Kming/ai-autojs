@@ -25,6 +25,7 @@ class GrayscalePanel(BasePanel):
         row = QHBoxLayout()
         row.addWidget(QLabel("文件名:"))
         self._filename = QLineEdit("gray.png")
+        self._filename.returnPressed.connect(self._on_execute)
         row.addWidget(self._filename)
         self.add_layout(row)
 

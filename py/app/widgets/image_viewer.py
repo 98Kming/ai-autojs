@@ -149,6 +149,8 @@ class ImageViewer(QGraphicsView):
         self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
         self._zoom_level = self.transform().m11()
         self.resetTransform()
+        # 限制初始缩放不超过 [MIN_ZOOM, MAX_ZOOM]，防止小图自动放太大导致无法缩放
+        self._zoom_level = max(self.MIN_ZOOM, min(self.MAX_ZOOM, self._zoom_level))
         self._pan_offset = QPointF(0, 0)
         self._recenter()
         self._item_set_transform()
@@ -201,6 +203,7 @@ class ImageViewer(QGraphicsView):
             self.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
             self._zoom_level = self.transform().m11()
             self.resetTransform()
+            self._zoom_level = max(self.MIN_ZOOM, min(self.MAX_ZOOM, self._zoom_level))
             self._pan_offset = QPointF(0, 0)
             self._recenter()
             self._item_set_transform()

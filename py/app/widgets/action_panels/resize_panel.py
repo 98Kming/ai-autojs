@@ -67,6 +67,7 @@ class ResizePanel(BasePanel):
         row4 = QHBoxLayout()
         row4.addWidget(QLabel("文件名:"))
         self._filename = QLineEdit("resized.png")
+        self._filename.returnPressed.connect(self._on_execute)
         row4.addWidget(self._filename)
         self.add_layout(row4)
 

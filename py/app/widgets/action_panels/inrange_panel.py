@@ -76,6 +76,7 @@ class InRangePanel(BasePanel):
         # 文件名 + 执行
         row3 = QHBoxLayout()
         self._filename = QLineEdit("_inrange.png")
+        self._filename.returnPressed.connect(self._on_execute)
         row3.addWidget(self._filename)
         exec_btn = QPushButton("⬛ 执行")
         exec_btn.clicked.connect(self._on_execute)

@@ -40,6 +40,7 @@ class ThresholdPanel(BasePanel):
         row3 = QHBoxLayout()
         row3.addWidget(QLabel("文件名:"))
         self._filename = QLineEdit("threshold.png")
+        self._filename.returnPressed.connect(self._on_execute)
         row3.addWidget(self._filename)
         self.add_layout(row3)
 

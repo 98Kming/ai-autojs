@@ -58,6 +58,7 @@ class AdaptivePanel(BasePanel):
         row5 = QHBoxLayout()
         row5.addWidget(QLabel("文件名:"))
         self._filename = QLineEdit("adaptive.png")
+        self._filename.returnPressed.connect(self._on_execute)
         row5.addWidget(self._filename)
         self.add_layout(row5)
 

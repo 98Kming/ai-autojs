@@ -48,6 +48,7 @@ class CropPanel(BasePanel):
         row3 = QHBoxLayout()
         row3.addWidget(QLabel("文件名:"))
         self._filename = QLineEdit("crop.png")
+        self._filename.returnPressed.connect(self._on_execute)
         row3.addWidget(self._filename)
         self.add_layout(row3)
 
@@ -62,7 +63,7 @@ class CropPanel(BasePanel):
         self._y_input.setValue(y)
         self._w_input.setValue(w)
         self._h_input.setValue(h)
-        self._filename.setText(f"crop_{x}_{y}_{w}_{h}.png")
+        self._filename.setText(f"_{x}_{y}_{w}_{h}.png")
 
     def _on_coord_changed(self):
         """坐标变化时更新文件名"""
@@ -70,7 +71,7 @@ class CropPanel(BasePanel):
         y = self._y_input.value()
         w = self._w_input.value()
         h = self._h_input.value()
-        self._filename.setText(f"crop_{x}_{y}_{w}_{h}.png")
+        self._filename.setText(f"_{x}_{y}_{w}_{h}.png")
 
     def _on_execute(self):
         self.crop_execute.emit(

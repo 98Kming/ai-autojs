@@ -53,7 +53,9 @@ function onDelete() {
       <el-image :src="src" fit="cover" lazy />
     </div>
     <div class="card-info">
-      <span class="card-name">{{ fileName }}</span>
+      <el-tooltip :content="fileName" placement="top" :show-after="300">
+        <span class="card-name">{{ fileName }}</span>
+      </el-tooltip>
       <div class="card-actions">
         <el-tooltip content="下载" :show-after="500">
           <el-button size="small" text :icon="Download" @click.stop="onDownload" />
