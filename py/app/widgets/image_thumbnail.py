@@ -1,6 +1,7 @@
 """缩略图卡片，对应 ImageCard.vue"""
 
 import base64
+import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap, QFont
 from PySide6.QtWidgets import (
@@ -151,14 +152,21 @@ class ImageThumbnail(QFrame):
         elif action == delete_action:
             self.delete_requested.emit(self._image.id)
 
+    # 上一次保存的目录（跨实例共享）
+    _last_save_dir = ""
+
     def _on_download(self):
         from PySide6.QtWidgets import QFileDialog
         pixmap = self._load_thumbnail()
         if pixmap.isNull():
             return
+        name = self._generate_name()
+        base, _ = os.path.splitext(name)  # 移除已有扩展名避免重复
+        default_path = os.path.join(self._last_save_dir, f"{base}.png") if self._last_save_dir else f"{base}.png"
         filepath, _ = QFileDialog.getSaveFileName(
-            self, "保存图片", f"{self._generate_name()}.png",
+            self, "保存图片", default_path,
             "PNG (*.png);;JPEG (*.jpg);;所有文件 (*.*)"
         )
         if filepath:
+            ImageThumbnail._last_save_dir = os.path.dirname(filepath)
             pixmap.save(filepath)

@@ -409,6 +409,21 @@ class ImageViewer(QGraphicsView):
             self._crop_rect_item = None
         self._crop_pixel_rect = None
 
+    def update_crop_rect(self, x: int, y: int, w: int, h: int):
+        """从外部（裁剪面板参数变化）更新裁剪选区"""
+        if self._current_pixmap is None:
+            return
+        from PySide6.QtWidgets import QGraphicsRectItem
+        if self._crop_rect_item is None:
+            pen = QPen(QColor(COLORS["primary"]), 1, Qt.DashLine)
+            brush = QBrush(QColor(64, 158, 255, 40))
+            self._crop_rect_item = QGraphicsRectItem()
+            self._crop_rect_item.setPen(pen)
+            self._crop_rect_item.setBrush(brush)
+            self._scene.addItem(self._crop_rect_item)
+        self._crop_pixel_rect = QRectF(float(x), float(y), float(w), float(h))
+        self._sync_crop_rect()
+
     # ============ 内部 ============
 
     def _load_pixmap(self, entry: ImageEntry) -> QPixmap:

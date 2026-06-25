@@ -221,6 +221,7 @@ class MainWindow(QMainWindow):
         # 裁剪面板
         crop_panel = CropPanel(parent)
         crop_panel.crop_execute.connect(self._on_crop_execute)
+        crop_panel.region_changed.connect(self._on_crop_param_changed)
         self._action_panels["crop"] = crop_panel
 
         # 调整大小面板
@@ -631,6 +632,10 @@ class MainWindow(QMainWindow):
             panel.set_region(x, y, w, h)
             # 自动切换到裁剪模式并显示面板
             self._image_toolbar.set_active("crop")
+
+    def _on_crop_param_changed(self, x: int, y: int, w: int, h: int):
+        """裁剪参数变化 → 同步更新查看器中的选区"""
+        self._image_viewer.update_crop_rect(x, y, w, h)
 
     # ============ 图像处理执行槽 ============
 

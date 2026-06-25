@@ -325,6 +325,7 @@ Python 桌面 GUI 移植版，功能等齐 Vue 版，取消浏览器限制。
 py/
 ├── main.py                          # QApplication 入口
 ├── pyproject.toml                   # uv 项目配置
+├── run.bat                          # Windows 启动脚本（GBK 编码）
 │
 ├── app/
 │   ├── main_window.py               # 主窗口：信号接线、标签页、快捷键
@@ -364,12 +365,12 @@ py/
 │       ├── image_toolbar.py         # 左侧竖排工具按钮
 │       ├── image_list_panel.py      # 缩略图列表
 │       ├── image_thumbnail.py       # 72x72 缩略图卡片
-│       ├── image_viewer.py          # QGraphicsView 缩放/平移（identity view + item setPos/setScale 架构）
+│       ├── image_viewer.py          # QGraphicsView 缩放/平移（identity view + item setPos/setScale 架构；初始缩放限幅 [0.2,10]；外部 update_crop_rect）
 │       ├── magnifier_lens.py        # 10x 放大镜（像素网格+十字线+取色）
 │       ├── crop_overlay.py          # 裁剪框选覆盖层
 │       └── action_panels/           # 图像处理操作面板
 │           ├── base_panel.py        # 浮动面板基类
-│           ├── crop_panel.py        # 裁剪参数
+│           ├── crop_panel.py        # 裁剪参数（region_changed 信号同步选区；方向键反转）
 │           ├── resize_panel.py      # 缩放参数
 │           ├── grayscale_panel.py   # 灰度化
 │           ├── threshold_panel.py   # 固定阈值
