@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from PySide6.QtCore import QObject, Signal, QTimer, QUrl
 from PySide6.QtWebSockets import QWebSocket
+from PySide6.QtWebSockets import QWebSocketProtocol as WsProtocol
 from PySide6.QtNetwork import QAbstractSocket
 
 from app.protocol.messages import (
@@ -46,6 +47,7 @@ class WebSocketClient(QObject):
 
         # QWebSocket 实例
         self._socket: QWebSocket | None = None
+        self._connected: bool = False  # Python 侧连接状态，避免访问题 C++ 对象时 segfault
         self._intentional_close = False
         self._error_handled = False  # 防止 _on_error 和 _on_disconnected 重复清理
 
@@ -89,13 +91,14 @@ class WebSocketClient(QObject):
         """主动断开连接"""
         self._intentional_close = True
         self._error_handled = True
+        self._connected = False
         self._reconnect.destroy()
         self._stop_heartbeat()
         self._clear_execution_timeout()
         self._clear_pending_binary()
 
         if self._socket:
-            self._socket.close(1000, "用户主动断开")
+            self._socket.close(WsProtocol.CloseCode.CloseCodeNormal, "用户主动断开")
             self._socket = None
 
         self.status_changed.emit("disconnected")
@@ -103,7 +106,7 @@ class WebSocketClient(QObject):
 
     def send_code(self, code: str) -> bool:
         """发送 JS 代码执行"""
-        if self._socket is None or self._socket.state() != QAbstractSocket.ConnectedState:
+        if not self._connected or self._socket is None:
             print("[WS] 未连接，无法发送代码")
             return False
 
@@ -129,7 +132,7 @@ class WebSocketClient(QObject):
 
     def _do_connect(self):
         """执行实际连接"""
-        if self._socket and self._socket.state() == QAbstractSocket.ConnectedState:
+        if self._connected:
             print("[WS] 已连接，无需重复连接")
             return
 
@@ -167,6 +170,7 @@ class WebSocketClient(QObject):
     def _on_connected(self):
         print("[WS] 连接成功")
         self._error_handled = True
+        self._connected = True
         self.status_changed.emit("connected")
         self._reconnect.reset()
         self._start_heartbeat()
@@ -177,7 +181,10 @@ class WebSocketClient(QObject):
         # 如果 _on_error 已处理（如连接失败时 errorOccurred 先于 disconnected），
         # 跳过重复的状态变更和重连调度
         already_handled = self._error_handled
-        self._socket = None
+        self._connected = False
+        # 注意：不在此处设置 self._socket = None！
+        # Qt 还在 disconnected 信号发射链中，释放 C++ 对象会导致 use-after-free segfault。
+        # _on_connected 会覆盖引用，_do_connect 会清理旧 socket。
         self._error_handled = True
         self._stop_heartbeat()
         self._clear_execution_timeout()
@@ -196,13 +203,11 @@ class WebSocketClient(QObject):
 
     def _on_error(self, error: QAbstractSocket.SocketError):
         print(f"[WS] 连接错误: {error}")
-        # 连接失败时 errorOccurred 触发但 disconnected 可能不触发，
-        # 导致 UI 按钮卡在 disabled 状态。仅在未连接状态下触发清理。
-        if (self._socket is not None
-                and not self._error_handled
-                and self._socket.state() != QAbstractSocket.ConnectedState):
+        # 使用 self._connected（Python 侧标志）替代 self._socket.state()（C++ 对象访问），
+        # 防止 QWebSocket 内部状态不一致导致 segfault
+        if (not self._error_handled):
             self._error_handled = True
-            # 不主动 close socket，避免触发 _on_disconnected 导致双次 emit
+            self._connected = False
             if not self._intentional_close:
                 self.status_changed.emit("disconnected")
                 self._reconnect.schedule()
@@ -269,7 +274,7 @@ class WebSocketClient(QObject):
         self._heartbeat_timeout.stop()
 
     def _send_heartbeat(self):
-        if self._socket and self._socket.state() == QAbstractSocket.ConnectedState:
+        if self._connected and self._socket is not None:
             self._socket.sendTextMessage(json.dumps({"type": "ping"}))
 
             timeout_ms = self._heartbeat_interval_ms * HEARTBEAT_TIMEOUT_MULTIPLIER
@@ -282,6 +287,7 @@ class WebSocketClient(QObject):
         print("[WS] 心跳超时，断开连接")
         if self._socket:
             self._error_handled = True
+            self._connected = False
             old = self._socket
             self._socket = None
             try:
